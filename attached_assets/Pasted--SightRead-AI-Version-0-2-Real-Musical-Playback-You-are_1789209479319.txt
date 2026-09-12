@@ -1,0 +1,111 @@
+# SightRead AI — Version 0.2: Real Musical Playback
+
+You are continuing an existing working SightRead AI project.
+
+## Critical rule
+
+Do not rebuild the project from scratch.
+
+Do not remove or break the existing:
+
+* Landing page
+* `/reader` route
+* MusicXML file import
+* OpenSheetMusicDisplay rendering
+* Measure navigation
+* Tempo controls
+* Loop controls
+* Loading states
+* Invalid-file handling
+* TypeScript configuration
+* Production build
+
+First inspect the existing code and understand how the current reader works.
+
+## Goal
+
+Replace the current browser audio pulse with real musical playback based on the imported MusicXML file.
+
+## Requirements
+
+1. Parse the loaded MusicXML score.
+2. Extract:
+
+   * Notes
+   * Pitches
+   * Octaves
+   * Durations
+   * Rests
+   * Tempo
+   * Measures
+3. Create a proper browser playback engine using Web Audio API or a suitable lightweight audio library.
+4. Play the actual notes at the correct timing.
+5. Respect the selected BPM from the existing tempo control.
+6. Support:
+
+   * Play
+   * Pause
+   * Stop
+   * Reset
+   * Tempo adjustment
+   * Selected measure range
+   * Looping
+7. Ensure pause resumes from the correct position.
+8. Ensure stop resets playback cleanly.
+9. Ensure loop playback returns to the selected starting measure.
+10. Add a visible playback progress indicator.
+11. Add a current-measure indicator.
+12. Keep the interface responsive on desktop and mobile.
+
+## Audio quality
+
+Do not use a simple repeating pulse as the main playback.
+
+Use the best lightweight solution compatible with the existing project and browser environment.
+
+If sampled piano audio is too large or unreliable for this version, use a clearly pitched synthesized piano-like tone, but make the notes and rhythm musically correct.
+
+## Safety and scope
+
+Do not add:
+
+* Camera scanning
+* Image recognition
+* PDF conversion
+* Microphone input
+* MIDI input
+* AI chatbot
+* Payments
+* Login
+* Teacher accounts
+* Social features
+* Backend
+* Database
+* Analytics
+
+## Testing requirements
+
+Before finishing, test:
+
+1. The demo score loads.
+2. The score still renders correctly.
+3. Play produces the correct sequence of pitches.
+4. Pause works.
+5. Resume works.
+6. Stop works.
+7. Tempo changes affect playback speed.
+8. Measure looping works.
+9. Invalid MusicXML still displays a useful error.
+10. Production build passes.
+11. No new browser console errors are introduced.
+
+At the end, report:
+
+* Files changed
+* Playback method used
+* Features completed
+* Tests performed
+* Known limitations
+* Exact run and build commands
+
+Do not claim completion unless the actual notes and rhythms are being played.

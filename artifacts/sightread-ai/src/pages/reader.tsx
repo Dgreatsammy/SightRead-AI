@@ -2,11 +2,8 @@ import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'reac
 import { ArrowLeft, ChevronLeft, FileUp, Gauge, Music2, Pause, Play, Repeat2, RotateCcw, Square, Volume2 } from 'lucide-react';
 import { Link } from 'wouter';
 import { demoMusicXml, isMusicXml } from '@/lib/musicxml';
+import { MusicalPlaybackEngine, parseMusicXml, type PlaybackScore, type PlaybackState } from '@/lib/playback';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
-
-const MEASURE_COUNT = 4;
-
-type PlaybackState = 'stopped' | 'playing' | 'paused';
 
 function BrandMark() {
   return <Link href="/" className="flex items-center gap-3" data-testid="link-reader-brand"><span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[#e46b50] text-[#fff8eb]"><Music2 size={17} /></span><span className="hidden font-serif text-[18px] font-semibold tracking-[-.03em] text-[#f5efe5] sm:block">SightRead <i className="not-italic text-[#ef8b70]">AI</i></span></Link>;
@@ -20,8 +17,7 @@ function PlaybackIcon({ state }: { state: PlaybackState }) {
 export default function Reader() {
   const scoreRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const timerRef = useRef<number | null>(null);
-  const audioRef = useRef<AudioContext | null>(null);
+  const engineRef = useRef<MusicalPlaybackEngine | null>(null);
   const [xml, setXml] = useState(demoMusicXml);
   const [scoreTitle, setScoreTitle] = useState('Evening Study');
   const [scoreStatus, setScoreStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -29,16 +25,42 @@ export default function Reader() {
   const [tempo, setTempo] = useState(76);
   const [playback, setPlayback] = useState<PlaybackState>('stopped');
   const [currentMeasure, setCurrentMeasure] = useState(1);
+  const [progress, setProgress] = useState(0);
+  const [score, setScore] = useState<PlaybackScore | null>(null);
   const [loop, setLoop] = useState(false);
   const [loopStart, setLoopStart] = useState(1);
   const [loopEnd, setLoopEnd] = useState(4);
 
+  const handleProgress = useCallback((snapshot: { state: PlaybackState; currentMeasure: number; progress: number }) => {
+    setPlayback(snapshot.state);
+    setCurrentMeasure(snapshot.currentMeasure + 1);
+    setProgress(snapshot.progress);
+  }, []);
+
+  useEffect(() => {
+    const engine = new MusicalPlaybackEngine(handleProgress);
+    engineRef.current = engine;
+    return () => {
+      engine.dispose();
+      engineRef.current = null;
+    };
+  }, [handleProgress]);
+
   const renderScore = useCallback(async (source: string) => {
     if (!scoreRef.current) return;
+    engineRef.current?.stop();
     setScoreStatus('loading');
     setErrorText('');
     scoreRef.current.innerHTML = '';
     try {
+      const parsed = parseMusicXml(source);
+      setScore(parsed);
+      setScoreTitle(parsed.title);
+      setTempo(Math.round(parsed.tempo));
+      setLoopStart(1);
+      setLoopEnd(parsed.measures.length);
+      setCurrentMeasure(1);
+      setProgress(0);
       const osmd = new OpenSheetMusicDisplay(scoreRef.current, {
         autoResize: true,
         backend: 'svg',
@@ -52,75 +74,32 @@ export default function Reader() {
       await osmd.load(source);
       osmd.render();
       setScoreStatus('ready');
-    } catch {
+    } catch (error) {
       setScoreStatus('error');
-      setErrorText('That file could not be read as MusicXML. Try exporting a .musicxml or .xml file from your notation app.');
+      setScore(null);
+      setErrorText(error instanceof Error ? error.message : 'That file could not be read as MusicXML. Try exporting a .musicxml or .xml file from your notation app.');
     }
   }, []);
 
   useEffect(() => {
     void renderScore(xml);
-    return () => {
-      if (timerRef.current) window.clearInterval(timerRef.current);
-    };
   }, [renderScore, xml]);
 
-  const pulse = useCallback(() => {
-    try {
-      const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextClass) return;
-      const context = audioRef.current ?? new AudioContextClass();
-      audioRef.current = context;
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.value = currentMeasure === 1 ? 523.25 : 392;
-      gain.gain.setValueAtTime(.0001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(.06, context.currentTime + .01);
-      gain.gain.exponentialRampToValueAtTime(.0001, context.currentTime + .13);
-      oscillator.connect(gain).connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + .14);
-    } catch {
-      // Browsers without Web Audio still get visual playback.
-    }
-  }, [currentMeasure]);
-
-  const stopPlayback = useCallback(() => {
-    if (timerRef.current) window.clearInterval(timerRef.current);
-    timerRef.current = null;
-    setPlayback('stopped');
-    setCurrentMeasure(loop ? loopStart : 1);
-  }, [loop, loopStart]);
-
-  const startPlayback = useCallback(() => {
-    if (timerRef.current) window.clearInterval(timerRef.current);
-    setPlayback('playing');
-    pulse();
-    const interval = Math.max(220, (60000 / tempo) * 4);
-    timerRef.current = window.setInterval(() => {
-      setCurrentMeasure((measure) => {
-        const end = loop ? loopEnd : MEASURE_COUNT;
-        const start = loop ? loopStart : 1;
-        const next = measure >= end ? start : measure + 1;
-        return next;
-      });
-      pulse();
-    }, interval);
-  }, [loop, loopEnd, loopStart, pulse, tempo]);
+  useEffect(() => {
+    if (score) engineRef.current?.setScore(score);
+  }, [score]);
 
   const togglePlayback = () => {
-    if (playback === 'playing') {
-      if (timerRef.current) window.clearInterval(timerRef.current);
-      timerRef.current = null;
-      setPlayback('paused');
-    } else {
-      startPlayback();
-    }
+    if (playback === 'playing') engineRef.current?.pause();
+    else engineRef.current?.play();
   };
 
+  const stopPlayback = () => engineRef.current?.stop();
+
   const jumpMeasure = (measure: number) => {
-    const next = Math.min(MEASURE_COUNT, Math.max(1, measure));
+    const measureCount = score?.measures.length ?? 1;
+    const next = Math.min(measureCount, Math.max(1, measure));
+    engineRef.current?.seekMeasure(next - 1);
     setCurrentMeasure(next);
     scoreRef.current?.scrollTo({ left: (next - 1) * 260, behavior: 'smooth' });
   };
@@ -139,6 +118,7 @@ export default function Reader() {
       setScoreTitle(file.name.replace(/\.(musicxml|xml)$/i, '') || 'Imported score');
       setXml(content);
       setCurrentMeasure(1);
+       setProgress(0);
     };
     reader.onerror = () => {
       setScoreStatus('error');
@@ -146,6 +126,12 @@ export default function Reader() {
     };
     reader.readAsText(file);
     event.target.value = '';
+  };
+
+  const measureCount = score?.measures.length ?? 0;
+  const updateRange = (start: number, end: number) => {
+    engineRef.current?.setRange(start - 1, end - 1);
+    setProgress(0);
   };
 
   return (
@@ -159,7 +145,7 @@ export default function Reader() {
         <section className="min-w-0 px-4 pb-10 pt-7 sm:px-7 lg:px-10 lg:pt-10">
           <div className="mx-auto max-w-[1040px]">
             <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
-              <div><p className="font-mono text-[10px] uppercase tracking-[.19em] text-[#db644a]">Current score</p><h1 className="mt-2 font-serif text-[clamp(2rem,4vw,3.35rem)] leading-none tracking-[-.055em]" data-testid="text-score-title">{scoreTitle}</h1><p className="mt-3 text-[13px] text-[#69737a]">Piano · 4 measures · a study in finding the line</p></div>
+              <div><p className="font-mono text-[10px] uppercase tracking-[.19em] text-[#db644a]">Current score</p><h1 className="mt-2 font-serif text-[clamp(2rem,4vw,3.35rem)] leading-none tracking-[-.055em]" data-testid="text-score-title">{scoreTitle}</h1><p className="mt-3 text-[13px] text-[#69737a]">Piano · {measureCount || '—'} measures · a study in finding the line</p></div>
               <div className="flex items-center gap-2 rounded-full border border-[#cec3b5] bg-[#f2ece2] px-3 py-2 font-mono text-[10px] uppercase tracking-[.13em] text-[#6f7776]" data-testid="status-score"><span className={`h-2 w-2 rounded-full ${scoreStatus === 'ready' ? 'bg-[#4c8d73]' : scoreStatus === 'error' ? 'bg-[#db644a]' : 'bg-[#d9a744]'}`} />{scoreStatus === 'ready' ? 'Score ready' : scoreStatus === 'error' ? 'Needs attention' : 'Setting the page'}</div>
             </div>
 
@@ -167,9 +153,9 @@ export default function Reader() {
               {scoreStatus === 'loading' && <div className="absolute inset-0 z-[2] flex min-h-[560px] flex-col items-center justify-center bg-[#fcf8ef] px-6"><div className="mb-5 flex items-end gap-1.5" aria-hidden="true"><span className="h-5 w-1.5 animate-pulse rounded-full bg-[#db644a]" /><span className="h-8 w-1.5 animate-pulse rounded-full bg-[#e2bc64] [animation-delay:120ms]" /><span className="h-6 w-1.5 animate-pulse rounded-full bg-[#214e4b] [animation-delay:240ms]" /></div><p className="font-serif text-[21px]">Setting the page…</p><p className="mt-2 text-[13px] text-[#7a817f]">Rendering your score for reading.</p></div>}
               {scoreStatus === 'error' && <div className="flex min-h-[560px] flex-col items-center justify-center px-6 text-center"><div className="grid h-12 w-12 place-items-center rounded-full bg-[#f2d2c6] text-[#c85840]"><FileUp size={20} /></div><p className="mt-5 font-serif text-[23px]">This page needs another score.</p><p className="mt-2 max-w-[390px] text-[13px] leading-6 text-[#727875]" data-testid="status-score-error">{errorText}</p><button type="button" onClick={() => fileInputRef.current?.click()} className="mt-6 rounded-full bg-[#db644a] px-5 py-3 text-[11px] font-bold uppercase tracking-[.13em] text-[#fff8eb] transition-colors hover:bg-[#c85840]" data-testid="button-retry-import">Choose another file</button></div>}
               <div ref={scoreRef} className={`score-viewer max-h-[650px] min-h-[560px] overflow-auto p-5 transition-opacity sm:p-9 ${scoreStatus === 'ready' ? 'opacity-100' : 'opacity-0'}`} data-testid="score-rendered" aria-label="Rendered MusicXML score" />
-              {scoreStatus === 'ready' && <div className="pointer-events-none absolute bottom-4 left-4 rounded-full bg-[#214e4b] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-[#e8eee7] opacity-90" data-testid="status-current-measure">Reading measure {currentMeasure}</div>}
+               {scoreStatus === 'ready' && <div className="pointer-events-none absolute bottom-4 left-4 rounded-full bg-[#214e4b] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[.12em] text-[#e8eee7] opacity-90" data-testid="status-current-measure">Reading measure {currentMeasure}</div>}
             </div>
-            <div className="mt-3 flex items-center justify-between font-mono text-[10px] uppercase tracking-[.13em] text-[#87908d]"><span>Digital score / MusicXML</span><span data-testid="text-score-position">Measure {currentMeasure} of {MEASURE_COUNT}</span></div>
+             <div className="mt-3 flex items-center justify-between font-mono text-[10px] uppercase tracking-[.13em] text-[#87908d]"><span>Digital score / MusicXML</span><span data-testid="text-score-position">Measure {currentMeasure} of {measureCount || '—'}</span></div>
           </div>
         </section>
 
@@ -178,18 +164,18 @@ export default function Reader() {
             <div className="mb-8"><p className="font-mono text-[10px] uppercase tracking-[.2em] text-[#db644a]">Controls</p><h2 className="mt-2 font-serif text-[27px] tracking-[-.04em]">Make it yours.</h2></div>
             <div className="rounded-[4px] border border-[#cfc2b3] bg-[#f3ece1] p-4 shadow-[0_8px_18px_rgba(31,42,53,.05)]">
               <div className="flex items-center justify-between"><span className="font-mono text-[10px] uppercase tracking-[.15em] text-[#707a79]">Playback</span><span className="flex items-center gap-1.5 font-mono text-[10px] text-[#db644a]" data-testid="status-playback"><span className={`h-1.5 w-1.5 rounded-full ${playback === 'playing' ? 'animate-pulse bg-[#db644a]' : 'bg-[#aab1ac]'}`} />{playback === 'playing' ? 'Playing' : playback === 'paused' ? 'Paused' : 'Ready'}</span></div>
-              <div className="mt-5 flex items-center gap-2"><button type="button" onClick={togglePlayback} disabled={scoreStatus !== 'ready'} className="grid h-12 w-12 place-items-center rounded-full bg-[#db644a] text-[#fff8eb] shadow-[0_7px_14px_rgba(190,75,54,.2)] transition-all hover:-translate-y-0.5 hover:bg-[#c85840] disabled:cursor-not-allowed disabled:opacity-40" aria-label={playback === 'playing' ? 'Pause score' : 'Play score'} data-testid="button-play-pause"><PlaybackIcon state={playback} /></button><button type="button" onClick={stopPlayback} className="grid h-10 w-10 place-items-center rounded-full border border-[#c5b8aa] text-[#526171] transition-colors hover:border-[#db644a] hover:text-[#db644a]" aria-label="Stop score" data-testid="button-stop"><Square size={14} fill="currentColor" /></button><button type="button" onClick={() => { setCurrentMeasure(1); jumpMeasure(1); }} className="ml-auto grid h-10 w-10 place-items-center rounded-full border border-[#c5b8aa] text-[#526171] transition-colors hover:border-[#db644a] hover:text-[#db644a]" aria-label="Reset to beginning" data-testid="button-reset"><RotateCcw size={15} /></button></div>
-              <div className="mt-6 border-t border-[#d9cebf] pt-5"><div className="flex items-center justify-between"><label htmlFor="tempo" className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.15em] text-[#707a79]"><Gauge size={14} /> Tempo</label><span className="font-mono text-[12px] text-[#21354a]" data-testid="text-tempo">{tempo} BPM</span></div><input id="tempo" type="range" min="40" max="160" value={tempo} onChange={(event) => setTempo(Number(event.target.value))} className="mt-4 h-1.5 w-full accent-[#db644a]" data-testid="input-tempo" /><div className="mt-2 flex justify-between font-mono text-[9px] text-[#9a9c94]"><span>40</span><span>160</span></div></div>
+               <div className="mt-5 flex items-center gap-2"><button type="button" onClick={togglePlayback} disabled={scoreStatus !== 'ready'} className="grid h-12 w-12 place-items-center rounded-full bg-[#db644a] text-[#fff8eb] shadow-[0_7px_14px_rgba(190,75,54,.2)] transition-all hover:-translate-y-0.5 hover:bg-[#c85840] disabled:cursor-not-allowed disabled:opacity-40" aria-label={playback === 'playing' ? 'Pause score' : 'Play score'} data-testid="button-play-pause"><PlaybackIcon state={playback} /></button><button type="button" onClick={stopPlayback} className="grid h-10 w-10 place-items-center rounded-full border border-[#c5b8aa] text-[#526171] transition-colors hover:border-[#db644a] hover:text-[#db644a]" aria-label="Stop score" data-testid="button-stop"><Square size={14} fill="currentColor" /></button><button type="button" onClick={() => { engineRef.current?.reset(); setCurrentMeasure(1); setProgress(0); }} className="ml-auto grid h-10 w-10 place-items-center rounded-full border border-[#c5b8aa] text-[#526171] transition-colors hover:border-[#db644a] hover:text-[#db644a]" aria-label="Reset to beginning" data-testid="button-reset"><RotateCcw size={15} /></button></div>
+               <div className="mt-5 border-t border-[#d9cebf] pt-5"><div className="flex items-center justify-between"><label htmlFor="tempo" className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.15em] text-[#707a79]"><Gauge size={14} /> Tempo</label><span className="font-mono text-[12px] text-[#21354a]" data-testid="text-tempo">{tempo} BPM</span></div><input id="tempo" type="range" min="40" max="160" value={tempo} onChange={(event) => { const nextTempo = Number(event.target.value); setTempo(nextTempo); engineRef.current?.setTempo(nextTempo); }} className="mt-4 h-1.5 w-full accent-[#db644a]" data-testid="input-tempo" /><div className="mt-2 flex justify-between font-mono text-[9px] text-[#9a9c94]"><span>40</span><span>160</span></div><div className="mt-4 h-1 overflow-hidden rounded-full bg-[#d8cec1]" role="progressbar" aria-label="Playback progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)} data-testid="progress-playback"><div className="h-full rounded-full bg-[#db644a] transition-[width] duration-100" style={{ width: `${progress * 100}%` }} /></div><div className="mt-2 flex items-center justify-between font-mono text-[9px] uppercase tracking-[.12em] text-[#9a9c94]"><span data-testid="text-playback-measure">Measure {currentMeasure}</span><span>{Math.round(progress * 100)}%</span></div></div>
             </div>
 
             <div className="mt-4 rounded-[4px] border border-[#cfc2b3] bg-[#f3ece1] p-4">
               <div className="flex items-center justify-between"><span className="font-mono text-[10px] uppercase tracking-[.15em] text-[#707a79]">Jump to measure</span><span className="font-mono text-[11px] text-[#db644a]">{String(currentMeasure).padStart(2, '0')}</span></div>
-              <div className="mt-4 grid grid-cols-4 gap-1.5">{Array.from({ length: MEASURE_COUNT }, (_, index) => index + 1).map((measure) => <button key={measure} type="button" onClick={() => jumpMeasure(measure)} className={`h-9 rounded-[3px] border font-mono text-[11px] transition-colors ${currentMeasure === measure ? 'border-[#db644a] bg-[#db644a] text-[#fff8eb]' : 'border-[#d0c3b5] bg-[#ede4d8] text-[#667070] hover:border-[#db644a] hover:text-[#db644a]'}`} aria-label={`Go to measure ${measure}`} data-testid={`button-measure-${measure}`}>{measure}</button>)}</div>
+               <div className="mt-4 grid grid-cols-4 gap-1.5">{Array.from({ length: measureCount }, (_, index) => index + 1).map((measure) => <button key={measure} type="button" onClick={() => jumpMeasure(measure)} className={`h-9 rounded-[3px] border font-mono text-[11px] transition-colors ${currentMeasure === measure ? 'border-[#db644a] bg-[#db644a] text-[#fff8eb]' : 'border-[#d0c3b5] bg-[#ede4d8] text-[#667070] hover:border-[#db644a] hover:text-[#db644a]'}`} aria-label={`Go to measure ${measure}`} data-testid={`button-measure-${measure}`}>{measure}</button>)}</div>
             </div>
 
             <div className={`mt-4 rounded-[4px] border p-4 transition-colors ${loop ? 'border-[#c58c59] bg-[#f5e6cb]' : 'border-[#cfc2b3] bg-[#f3ece1]'}`}>
-              <button type="button" onClick={() => setLoop((value) => !value)} className="flex w-full items-center justify-between" aria-pressed={loop} data-testid="button-toggle-loop"><span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.15em] text-[#707a79]"><Repeat2 size={14} /> Loop passage</span><span className={`relative h-5 w-9 rounded-full transition-colors ${loop ? 'bg-[#db644a]' : 'bg-[#c7bdb0]'}`}><span className={`absolute top-1 h-3 w-3 rounded-full bg-[#fff8eb] transition-transform ${loop ? 'translate-x-5' : 'translate-x-1'}`} /></span></button>
-              <div className="mt-5 grid grid-cols-2 gap-3"><label className="font-mono text-[9px] uppercase tracking-[.12em] text-[#8a8d86]">From<input type="number" min="1" max={loopEnd} value={loopStart} onChange={(event) => setLoopStart(Math.min(loopEnd, Math.max(1, Number(event.target.value) || 1)))} className="mt-2 w-full rounded-[3px] border border-[#cfc2b3] bg-[#f9f3e9] px-3 py-2 font-sans text-[13px] text-[#21354a] outline-none focus:border-[#db644a]" data-testid="input-loop-start" /></label><label className="font-mono text-[9px] uppercase tracking-[.12em] text-[#8a8d86]">To<input type="number" min={loopStart} max={MEASURE_COUNT} value={loopEnd} onChange={(event) => setLoopEnd(Math.max(loopStart, Math.min(MEASURE_COUNT, Number(event.target.value) || MEASURE_COUNT)))} className="mt-2 w-full rounded-[3px] border border-[#cfc2b3] bg-[#f9f3e9] px-3 py-2 font-sans text-[13px] text-[#21354a] outline-none focus:border-[#db644a]" data-testid="input-loop-end" /></label></div>
+               <button type="button" onClick={() => setLoop((value) => { engineRef.current?.setLoop(!value); return !value; })} className="flex w-full items-center justify-between" aria-pressed={loop} data-testid="button-toggle-loop"><span className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.15em] text-[#707a79]"><Repeat2 size={14} /> Loop passage</span><span className={`relative h-5 w-9 rounded-full transition-colors ${loop ? 'bg-[#db644a]' : 'bg-[#c7bdb0]'}`}><span className={`absolute top-1 h-3 w-3 rounded-full bg-[#fff8eb] transition-transform ${loop ? 'translate-x-5' : 'translate-x-1'}`} /></span></button>
+               <div className="mt-5 grid grid-cols-2 gap-3"><label className="font-mono text-[9px] uppercase tracking-[.12em] text-[#8a8d86]">From<input type="number" min="1" max={loopEnd} value={loopStart} onChange={(event) => { const nextStart = Math.min(loopEnd, Math.max(1, Number(event.target.value) || 1)); setLoopStart(nextStart); updateRange(nextStart, loopEnd); }} className="mt-2 w-full rounded-[3px] border border-[#cfc2b3] bg-[#f9f3e9] px-3 py-2 font-sans text-[13px] text-[#21354a] outline-none focus:border-[#db644a]" data-testid="input-loop-start" /></label><label className="font-mono text-[9px] uppercase tracking-[.12em] text-[#8a8d86]">To<input type="number" min={loopStart} max={Math.max(loopStart, measureCount)} value={loopEnd} onChange={(event) => { const nextEnd = Math.max(loopStart, Math.min(measureCount || 1, Number(event.target.value) || measureCount)); setLoopEnd(nextEnd); updateRange(loopStart, nextEnd); }} className="mt-2 w-full rounded-[3px] border border-[#cfc2b3] bg-[#f9f3e9] px-3 py-2 font-sans text-[13px] text-[#21354a] outline-none focus:border-[#db644a]" data-testid="input-loop-end" /></label></div>
               <p className="mt-3 text-[11px] leading-5 text-[#7b7d76]">{loop ? `Measures ${loopStart}–${loopEnd} will repeat while you play.` : 'Turn this on to stay with a difficult passage.'}</p>
             </div>
 

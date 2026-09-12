@@ -1,0 +1,112 @@
+# SightRead AI — Build the first working vertical slice
+
+You are a senior full-stack engineer. Build a working web application called **SightRead AI**.
+
+## Product purpose
+
+SightRead AI is an AI-powered sight-reading practice platform. Users import digital sheet music, read it, play it back, and practice difficult sections. Future versions will scan sheet music images and evaluate live piano performance.
+
+## Critical scope restriction
+
+Build ONLY the first working vertical slice.
+
+Do not build:
+
+* AI sheet recognition yet.
+* Camera scanning.
+* PDF-to-MusicXML conversion.
+* Microphone performance analysis.
+* MIDI input.
+* Payments.
+* AI chatbot.
+* Teacher accounts.
+* Social features.
+* Complex analytics.
+
+## Technology
+
+Use:
+
+* React
+* TypeScript
+* Vite
+* Tailwind CSS
+* React Router
+* A proper MusicXML sheet-music rendering library, such as OpenSheetMusicDisplay.
+* A browser audio/playback solution.
+* Use a simple local development data layer initially.
+
+Do not add a backend or database until the basic score reader works.
+
+## First working user journey
+
+1. Open the application.
+2. See a professional landing page.
+3. Click "Try Demo".
+4. Open the score reader.
+5. Display a known, valid MusicXML demo score.
+6. Play the score.
+7. Pause and stop playback.
+8. Adjust tempo.
+9. Loop a selected measure range.
+10. Navigate between measures.
+
+## Screens
+
+### Landing page
+
+Brand: SightRead AI
+
+Tagline: See it. Read it. Sing it. Play it.
+
+Buttons:
+
+* Try Demo
+* Import MusicXML
+
+### Score reader
+
+Show:
+
+* Music title.
+* Proper rendered sheet music.
+* Playback controls.
+* Tempo control.
+* Measure navigation.
+* Loop controls.
+* Loading and error states.
+
+## Quality requirements
+
+* No blank screens.
+* No fake buttons.
+* No fake recognition results.
+* No broken imports.
+* No placeholder sheet music drawn with ordinary HTML.
+* Use a valid embedded MusicXML fixture.
+* Handle missing or invalid MusicXML gracefully.
+* Keep the project modular.
+* Do not overwrite working features when adding new ones.
+
+## Development process
+
+Before coding, inspect the environment and choose a compatible project setup.
+
+Then:
+
+1. Create the project.
+2. Verify the app starts.
+3. Implement the landing page.
+4. Implement the MusicXML fixture.
+5. Implement the score viewer.
+6. Implement playback.
+7. Test the complete journey.
+
+Do not proceed to the next major feature if the current feature is broken.
+
+At the end, report:
+
+* What was implemented.
+* What was tested.
+* Any known limitations.
+* Exact commands needed to run the project.

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "SightRead AI"
+description = "An AI-powered sight-reading practice app where musicians can open a valid MusicXML score, view professional sheet music, play it back, adjust tempo, navigate measures, and loop difficult passages."
+version = "1.0.0"
+id = "artifacts/sightread-ai"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18449
+
+[services.development]
+run = "pnpm --filter @workspace/sightread-ai run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/sightread-ai", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/sightread-ai/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18449"
+BASE_PATH = "/"

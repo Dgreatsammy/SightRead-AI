@@ -1,4 +1,5 @@
-export type PlaybackState = 'stopped' | 'playing' | 'paused';
+export type PlaybackState = 'stopped' | 'playing' | 'paused' | 'counting-in';
+export type CountInBars = 0 | 1 | 2;
 
 export interface PlaybackNote {
   startBeat: number;
@@ -20,14 +21,20 @@ export interface PlaybackScore {
   tempo: number;
   notes: PlaybackNote[];
   measures: PlaybackMeasure[];
+  beatsPerBar: number;
+  beatUnitBeats: number;
 }
 
 export interface PlaybackSnapshot {
   state: PlaybackState;
   currentMeasure: number;
+  currentNoteMidi: number | null;
   progress: number;
   positionBeat: number;
   durationBeats: number;
+  countInBeat: number;
+  countInBeatsTotal: number;
+  loopCount: number;
 }
 
 function textOf(parent: Document | Element, tagName: string) {
@@ -37,6 +44,15 @@ function textOf(parent: Document | Element, tagName: string) {
 function numberOf(parent: Element, tagName: string, fallback: number) {
   const value = Number(textOf(parent, tagName));
   return Number.isFinite(value) ? value : fallback;
+}
+
+function requiredDuration(note: Element) {
+  const durationText = textOf(note, 'duration');
+  const duration = Number(durationText);
+  if (!durationText || !Number.isFinite(duration) || duration <= 0) {
+    throw new Error('The score contains a note with an invalid duration.');
+  }
+  return duration;
 }
 
 function pitchToMidi(note: Element) {
@@ -67,13 +83,21 @@ export function parseMusicXml(source: string): PlaybackScore {
   }
 
   const root = document.documentElement;
-  if (!root || !/score-(partwise|timewise)/i.test(root.tagName)) {
-    throw new Error('The file does not contain a supported MusicXML score.');
+  if (!root || root.tagName.toLowerCase() !== 'score-partwise') {
+    throw new Error('Only partwise MusicXML scores are supported for practice playback.');
   }
 
-  const part = document.getElementsByTagName('part')[0];
-  const measureElements = part ? Array.from(part.getElementsByTagName('measure')) : [];
-  if (!part || measureElements.length === 0) {
+  const parts = Array.from(document.getElementsByTagName('part'));
+  if (parts.length === 0) {
+    throw new Error('The MusicXML score does not contain a part.');
+  }
+  if (parts.length > 1) {
+    throw new Error('This score contains multiple parts. Practice playback currently supports one part at a time.');
+  }
+
+  const part = parts[0];
+  const measureElements = Array.from(part.getElementsByTagName('measure'));
+  if (measureElements.length === 0) {
     throw new Error('The MusicXML score does not contain any measures.');
   }
 
@@ -86,18 +110,28 @@ export function parseMusicXml(source: string): PlaybackScore {
   let beatType = 4;
   let tempo = 76;
   let absoluteMeasureStart = 0;
+  let firstBeatsPerBar = 4;
+  let firstBeatUnitBeats = 1;
   const notes: PlaybackNote[] = [];
   const measures: PlaybackMeasure[] = [];
 
   measureElements.forEach((measureElement, measureIndex) => {
     const attributes = measureElement.getElementsByTagName('attributes')[0];
     if (attributes) {
-      divisions = Math.max(1, numberOf(attributes, 'divisions', divisions));
+      const parsedDivisions = numberOf(attributes, 'divisions', divisions);
+      if (!Number.isFinite(parsedDivisions) || parsedDivisions <= 0) {
+        throw new Error('The score contains invalid rhythmic divisions.');
+      }
+      divisions = parsedDivisions;
       const time = attributes.getElementsByTagName('time')[0];
       if (time) {
         beatsPerMeasure = Math.max(1, numberOf(time, 'beats', beatsPerMeasure));
         beatType = Math.max(1, numberOf(time, 'beat-type', beatType));
       }
+    }
+    if (measureIndex === 0) {
+      firstBeatsPerBar = beatsPerMeasure;
+      firstBeatUnitBeats = 4 / beatType;
     }
     tempo = readTempo(measureElement, tempo);
 
@@ -109,7 +143,11 @@ export function parseMusicXml(source: string): PlaybackScore {
     Array.from(measureElement.children).forEach((child) => {
       const tagName = child.tagName.toLowerCase();
       if (tagName === 'backup' || tagName === 'forward') {
-        const duration = Math.max(0, numberOf(child, 'duration', 0));
+        const durationText = textOf(child, 'duration');
+        const duration = Number(durationText);
+        if (!durationText || !Number.isFinite(duration) || duration < 0) {
+          throw new Error('The score contains an invalid backup or forward duration.');
+        }
         if (tagName === 'backup') {
           cursor = Math.max(0, cursor - duration);
         } else {
@@ -120,13 +158,15 @@ export function parseMusicXml(source: string): PlaybackScore {
       }
       if (tagName !== 'note') return;
 
-      const duration = Math.max(0, numberOf(child, 'duration', 0));
+      const duration = requiredDuration(child);
       const isChord = child.getElementsByTagName('chord').length > 0;
       const start = isChord ? lastNoteStart : cursor;
       const isRest = child.getElementsByTagName('rest').length > 0;
-      if (duration > 0) {
-        localNotes.push({ start, duration, midi: isRest ? null : pitchToMidi(child), isRest });
+      const midi = isRest ? null : pitchToMidi(child);
+      if (!isRest && midi === null) {
+        throw new Error('The score contains a note without a valid pitch. Unsupported notes were not played.');
       }
+      localNotes.push({ start, duration, midi, isRest });
       if (!isChord) {
         lastNoteStart = cursor;
         cursor += duration;
@@ -159,7 +199,14 @@ export function parseMusicXml(source: string): PlaybackScore {
   }
 
   notes.sort((left, right) => left.startBeat - right.startBeat);
-  return { title, tempo, notes, measures };
+  return {
+    title,
+    tempo,
+    notes,
+    measures,
+    beatsPerBar: firstBeatsPerBar,
+    beatUnitBeats: firstBeatUnitBeats,
+  };
 }
 
 type ActiveVoice = {
@@ -171,16 +218,28 @@ export class MusicalPlaybackEngine {
   private readonly onProgress: (snapshot: PlaybackSnapshot) => void;
   private score: PlaybackScore | null = null;
   private context: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
   private timer: number | null = null;
   private activeVoices = new Set<ActiveVoice>();
   private tempo = 76;
+  private playbackSpeed = 1;
+  private countInBars: CountInBars = 0;
+  private metronome = false;
+  private volume = 0.65;
+  private muted = false;
   private loop = false;
   private rangeStart = 0;
   private rangeEnd = 0;
   private positionBeat = 0;
   private lastWallTime = 0;
   private nextNoteIndex = 0;
+  private nextMetronomeBeat = 0;
   private state: PlaybackState = 'stopped';
+  private awaitingCountIn = true;
+  private countInElapsedBeats = 0;
+  private countInTotalBeats = 0;
+  private nextCountInBeat = 0;
+  private loopCount = 0;
 
   constructor(onProgress: (snapshot: PlaybackSnapshot) => void) {
     this.onProgress = onProgress;
@@ -194,6 +253,8 @@ export class MusicalPlaybackEngine {
     this.rangeEnd = Math.max(0, score.measures.length - 1);
     this.positionBeat = score.measures[0]?.startBeat ?? 0;
     this.nextNoteIndex = 0;
+    this.nextMetronomeBeat = this.positionBeat;
+    this.loopCount = 0;
     this.report();
   }
 
@@ -204,20 +265,63 @@ export class MusicalPlaybackEngine {
     this.report();
   }
 
+  setPlaybackSpeed(speed: number) {
+    this.tick();
+    this.playbackSpeed = Math.max(0.25, Math.min(1, speed));
+    this.lastWallTime = performance.now();
+    this.report();
+  }
+
+  setCountInBars(countInBars: CountInBars) {
+    this.countInBars = countInBars;
+    if (this.state === 'counting-in' && countInBars === 0) {
+      this.countInElapsedBeats = 0;
+      this.countInTotalBeats = 0;
+      this.awaitingCountIn = false;
+      this.state = 'playing';
+      this.lastWallTime = performance.now();
+    }
+    this.report();
+  }
+
+  setMetronome(metronome: boolean) {
+    this.metronome = metronome;
+    this.report();
+  }
+
+  setVolume(volume: number) {
+    this.volume = Math.max(0, Math.min(1, volume));
+    this.updateMasterGain();
+    this.report();
+  }
+
+  setMuted(muted: boolean) {
+    this.muted = muted;
+    this.updateMasterGain();
+    this.report();
+  }
+
   setLoop(loop: boolean) {
     this.loop = loop;
+    if (!loop) this.loopCount = 0;
+    this.report();
   }
 
   setRange(startMeasure: number, endMeasure: number) {
     if (!this.score) return;
+    const wasPlaying = this.state === 'playing' || this.state === 'counting-in';
     this.rangeStart = Math.max(0, Math.min(startMeasure, this.score.measures.length - 1));
     this.rangeEnd = Math.max(this.rangeStart, Math.min(endMeasure, this.score.measures.length - 1));
-    const rangeStartBeat = this.score.measures[this.rangeStart]?.startBeat ?? 0;
-    const rangeEndBeat = this.rangeEndBeat();
-    if (this.positionBeat < rangeStartBeat || this.positionBeat >= rangeEndBeat) {
-      this.positionBeat = rangeStartBeat;
-    }
+    this.positionBeat = this.rangeStartBeat();
     this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
+    this.nextMetronomeBeat = this.positionBeat;
+    this.loopCount = 0;
+    this.armCountIn();
+    this.stopVoices();
+    if (wasPlaying) {
+      this.state = 'stopped';
+      this.clearTimer();
+    }
     this.report();
   }
 
@@ -226,6 +330,10 @@ export class MusicalPlaybackEngine {
     const nextMeasure = Math.max(0, Math.min(measureIndex, this.score.measures.length - 1));
     this.positionBeat = this.score.measures[nextMeasure]?.startBeat ?? 0;
     this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
+    this.nextMetronomeBeat = this.positionBeat;
+    this.loopCount = 0;
+    this.armCountIn();
+    this.stopVoices();
     this.report();
   }
 
@@ -234,21 +342,25 @@ export class MusicalPlaybackEngine {
     if (this.positionBeat >= this.rangeEndBeat()) {
       this.positionBeat = this.rangeStartBeat();
       this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
+      this.nextMetronomeBeat = this.positionBeat;
+      this.armCountIn();
     }
     const context = this.ensureContext();
     if (!context) return;
     void context.resume();
-    this.state = 'playing';
+    if (this.awaitingCountIn && this.countInBars > 0) this.startCountIn();
+    this.state = this.isCountingIn() ? 'counting-in' : 'playing';
     this.lastWallTime = performance.now();
     if (this.timer === null) this.timer = window.setInterval(() => this.tick(), 20);
     this.report();
   }
 
   pause() {
-    if (this.state !== 'playing') return;
+    if (this.state !== 'playing' && this.state !== 'counting-in') return;
     this.tick();
     this.clearTimer();
     this.stopVoices();
+    if (this.state === 'playing') this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
     this.state = 'paused';
     this.report();
   }
@@ -260,7 +372,10 @@ export class MusicalPlaybackEngine {
     if (this.score) {
       this.positionBeat = this.rangeStartBeat();
       this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
+      this.nextMetronomeBeat = this.positionBeat;
     }
+    this.loopCount = 0;
+    this.armCountIn();
     this.report();
   }
 
@@ -270,6 +385,7 @@ export class MusicalPlaybackEngine {
     if (this.score) this.rangeEnd = Math.max(0, this.score.measures.length - 1);
     this.positionBeat = this.score?.measures[0]?.startBeat ?? 0;
     this.nextNoteIndex = 0;
+    this.nextMetronomeBeat = this.positionBeat;
     this.report();
   }
 
@@ -277,25 +393,49 @@ export class MusicalPlaybackEngine {
     this.stop();
     void this.context?.close();
     this.context = null;
+    this.masterGain = null;
   }
 
   private tick() {
-    if (!this.score || this.state !== 'playing') return;
+    if (!this.score || (this.state !== 'playing' && this.state !== 'counting-in')) return;
     const now = performance.now();
-    this.positionBeat += ((now - this.lastWallTime) / 1000) * (this.tempo / 60);
+    const deltaBeats = Math.max(0, (now - this.lastWallTime) / 1000) * (this.tempo / 60) * this.playbackSpeed;
     this.lastWallTime = now;
+
+    if (this.state === 'counting-in') {
+      this.countInElapsedBeats += deltaBeats;
+      while (
+        this.nextCountInBeat * this.score.beatUnitBeats < this.countInTotalBeats - 0.0001 &&
+        this.nextCountInBeat * this.score.beatUnitBeats <= this.countInElapsedBeats + 0.0001
+      ) {
+        this.playMetronomeClick(this.nextCountInBeat % this.score.beatsPerBar === 0);
+        this.nextCountInBeat += 1;
+      }
+      if (this.countInElapsedBeats >= this.countInTotalBeats) {
+        this.finishCountIn();
+      } else {
+        this.report();
+        return;
+      }
+    }
+
     const rangeEndBeat = this.rangeEndBeat();
+    this.positionBeat += deltaBeats;
+    this.schedulePlaybackMetronome(rangeEndBeat);
 
     if (this.positionBeat >= rangeEndBeat) {
       if (this.loop) {
         this.positionBeat = this.rangeStartBeat();
         this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
+        this.nextMetronomeBeat = this.positionBeat;
+        this.loopCount += 1;
         this.stopVoices();
       } else {
         this.positionBeat = rangeEndBeat;
         this.clearTimer();
         this.stopVoices();
         this.state = 'stopped';
+        this.awaitingCountIn = true;
         this.report();
         return;
       }
@@ -315,7 +455,9 @@ export class MusicalPlaybackEngine {
     if (note.isRest || note.midi === null || !this.context) return;
     const frequency = 440 * Math.pow(2, (note.midi - 69) / 12);
     const now = this.context.currentTime;
-    const duration = Math.max(0.06, (note.durationBeats * 60) / this.tempo);
+    const elapsedBeats = Math.max(0, this.positionBeat - note.startBeat);
+    const remainingBeats = Math.max(0.06, note.durationBeats - elapsedBeats);
+    const duration = Math.max(0.06, (remainingBeats * 60) / (this.tempo * this.playbackSpeed));
     const release = Math.min(0.18, duration * 0.4);
     const gain = this.context.createGain();
     const fundamental = this.context.createOscillator();
@@ -331,7 +473,7 @@ export class MusicalPlaybackEngine {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     fundamental.connect(gain);
     overtone.connect(gain);
-    gain.connect(this.context.destination);
+    gain.connect(this.ensureMasterGain());
     fundamental.start(now);
     overtone.start(now);
     fundamental.stop(now + duration + 0.02);
@@ -341,6 +483,33 @@ export class MusicalPlaybackEngine {
     window.setTimeout(() => this.activeVoices.delete(voice), (duration + 0.05) * 1000);
   }
 
+  private playMetronomeClick(strong: boolean) {
+    if (!this.context || (!this.metronome && !this.isCountingIn())) return;
+    const now = this.context.currentTime;
+    const oscillator = this.context.createOscillator();
+    const gain = this.context.createGain();
+    oscillator.type = 'square';
+    oscillator.frequency.setValueAtTime(strong ? 1320 : 880, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(strong ? 0.12 : 0.065, now + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+    oscillator.connect(gain);
+    gain.connect(this.ensureMasterGain());
+    oscillator.start(now);
+    oscillator.stop(now + 0.065);
+  }
+
+  private schedulePlaybackMetronome(rangeEndBeat: number) {
+    if (!this.score) return;
+    const unit = this.score.beatUnitBeats;
+    while (this.nextMetronomeBeat <= this.positionBeat + 0.0001 && this.nextMetronomeBeat < rangeEndBeat) {
+      const measure = this.measureAt(this.nextMetronomeBeat);
+      const beatInMeasure = measure ? Math.round((this.nextMetronomeBeat - measure.startBeat) / unit) : 0;
+      this.playMetronomeClick(beatInMeasure === 0);
+      this.nextMetronomeBeat += unit;
+    }
+  }
+
   private ensureContext() {
     if (this.context) return this.context;
     const AudioContextClass =
@@ -348,7 +517,55 @@ export class MusicalPlaybackEngine {
       (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) return null;
     this.context = new AudioContextClass();
+    this.masterGain = this.context.createGain();
+    this.masterGain.connect(this.context.destination);
+    this.updateMasterGain();
     return this.context;
+  }
+
+  private ensureMasterGain() {
+    if (!this.masterGain && !this.ensureContext()) {
+      throw new Error('Web Audio is not available in this browser.');
+    }
+    return this.masterGain!;
+  }
+
+  private updateMasterGain() {
+    if (!this.masterGain || !this.context) return;
+    this.masterGain.gain.setTargetAtTime(this.muted ? 0 : this.volume, this.context.currentTime, 0.01);
+  }
+
+  private startCountIn() {
+    if (!this.score || this.countInBars === 0) {
+      this.awaitingCountIn = false;
+      this.countInTotalBeats = 0;
+      return;
+    }
+    this.countInTotalBeats = this.countInBars * this.score.beatsPerBar * this.score.beatUnitBeats;
+    this.countInElapsedBeats = 0;
+    this.nextCountInBeat = 0;
+    this.awaitingCountIn = false;
+    this.state = 'counting-in';
+  }
+
+  private finishCountIn() {
+    this.countInTotalBeats = 0;
+    this.countInElapsedBeats = 0;
+    this.positionBeat = this.rangeStartBeat();
+    this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
+    this.nextMetronomeBeat = this.positionBeat;
+    this.state = 'playing';
+  }
+
+  private armCountIn() {
+    this.awaitingCountIn = true;
+    this.countInElapsedBeats = 0;
+    this.countInTotalBeats = 0;
+    this.nextCountInBeat = 0;
+  }
+
+  private isCountingIn() {
+    return this.countInTotalBeats > 0 && this.countInElapsedBeats < this.countInTotalBeats;
   }
 
   private stopVoices() {
@@ -385,8 +602,17 @@ export class MusicalPlaybackEngine {
 
   private findNoteIndex(positionBeat: number) {
     if (!this.score) return 0;
-    const index = this.score.notes.findIndex((note) => note.startBeat >= positionBeat - 0.0001);
+    const index = this.score.notes.findIndex((note) => note.startBeat + note.durationBeats > positionBeat + 0.0001);
     return index < 0 ? this.score.notes.length : index;
+  }
+
+  private measureAt(positionBeat: number) {
+    if (!this.score) return null;
+    let current = this.score.measures[0] ?? null;
+    this.score.measures.forEach((measure) => {
+      if (measure.startBeat <= positionBeat) current = measure;
+    });
+    return current;
   }
 
   private report() {
@@ -403,13 +629,24 @@ export class MusicalPlaybackEngine {
         : foundMeasureIndex < 0
           ? Math.max(0, (this.score?.measures.length ?? 1) - 1)
           : foundMeasureIndex;
+    const activeNote = this.score?.notes.find(
+      (note) =>
+        !note.isRest &&
+        note.midi !== null &&
+        this.positionBeat >= note.startBeat &&
+        this.positionBeat < note.startBeat + note.durationBeats,
+    );
     const progress = durationBeats === 0 ? 0 : Math.max(0, Math.min(1, (this.positionBeat - this.rangeStartBeat()) / durationBeats));
     this.onProgress({
       state: this.state,
       currentMeasure: Math.max(0, measureIndex),
+      currentNoteMidi: activeNote?.midi ?? null,
       progress,
       positionBeat: this.positionBeat,
       durationBeats,
+      countInBeat: this.isCountingIn() ? Math.min(this.nextCountInBeat, Math.ceil(this.countInTotalBeats / (this.score?.beatUnitBeats ?? 1))) : 0,
+      countInBeatsTotal: this.isCountingIn() ? Math.ceil(this.countInTotalBeats / (this.score?.beatUnitBeats ?? 1)) : 0,
+      loopCount: this.loopCount,
     });
   }
 }

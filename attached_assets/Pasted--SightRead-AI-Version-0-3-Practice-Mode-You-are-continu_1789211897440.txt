@@ -1,0 +1,189 @@
+# SightRead AI — Version 0.3 Practice Mode
+
+You are continuing the existing SightRead AI project.
+
+## Critical rule
+
+Do not rebuild the project.
+
+Do not remove or break any working feature from v0.1 or v0.2.
+
+Preserve:
+
+* Landing page
+* `/reader` route
+* MusicXML import
+* OpenSheetMusicDisplay rendering
+* Parsed note playback
+* Play
+* Pause
+* Resume
+* Stop
+* Reset
+* Tempo control
+* Measure navigation
+* Range selection
+* Looping
+* Progress indicator
+* Current-measure indicator
+* Loading and error states
+
+First inspect the existing implementation and understand the playback engine.
+
+## Goal
+
+Add a focused practice mode for musicians learning to sight-read sheet music.
+
+## Features
+
+### 1. Practice speed
+
+Add selectable playback speeds:
+
+* 25%
+* 50%
+* 75%
+* 100%
+
+The selected speed must change actual note timing, not merely change a label.
+
+The existing BPM control must continue working.
+
+## 2. Count-in
+
+Add a count-in option:
+
+* Off
+* 1 bar
+* 2 bars
+
+Before the selected playback range begins, play audible metronome counts.
+
+The count-in must not alter the musical timing of the score.
+
+## 3. Metronome
+
+Add:
+
+* Metronome on/off
+* Strong first beat
+* Weaker remaining beats
+* Tempo synchronized with playback
+
+Do not create a fake visual-only metronome.
+
+## 4. Volume and mute
+
+Add:
+
+* Master volume control
+* Mute button
+* Accessible labels
+* Safe default volume
+
+All audio must pass through a master gain control.
+
+## 5. Practice loop
+
+Improve the existing loop controls:
+
+* Selected start measure
+* Selected end measure
+* Loop enabled/disabled
+* Current loop count
+* Clear visual indication of the active loop
+
+The loop must restart at the selected start measure and stop at the selected end measure.
+
+## 6. Visual synchronization
+
+Synchronize the interface with playback:
+
+* Current measure
+* Current note when reliable
+* Playback progress
+* Count-in state
+* Loop state
+
+If exact note highlighting is unreliable, highlight the current measure instead of displaying incorrect note highlighting.
+
+## 7. Local practice settings
+
+Use local browser storage only for:
+
+* Last selected tempo
+* Last playback speed
+* Metronome preference
+* Volume
+* Last selected measure range
+
+Do not add:
+
+* Backend
+* Database
+* Login
+* Payments
+* Cloud sync
+* Analytics
+
+Imported MusicXML files do not need to be permanently stored in this version.
+
+## 8. MusicXML safety
+
+Do not claim support for advanced notation features unless the parser handles them correctly.
+
+Gracefully handle:
+
+* Empty scores
+* Missing pitch
+* Rests
+* Unsupported structures
+* Invalid durations
+* Invalid MusicXML
+* Scores with multiple parts
+
+Do not silently play incorrect notes.
+
+## Technical requirements
+
+* Keep playback logic modular.
+* Keep React UI separate from audio scheduling.
+* Avoid uncontrolled timer accumulation.
+* Stop and clean up scheduled audio nodes.
+* Handle suspended AudioContext states correctly after user interaction.
+* Use precise audio scheduling where possible.
+* Preserve the existing build configuration.
+
+## Testing requirements
+
+Test:
+
+1. Demo score still renders.
+2. Imported score still renders.
+3. Existing play/pause/stop/reset still work.
+4. Practice speed changes actual timing.
+5. Count-in works.
+6. Metronome works.
+7. Volume changes audio level.
+8. Mute works.
+9. Looping works.
+10. Current measure remains synchronized.
+11. Local settings reload correctly.
+12. Invalid MusicXML produces a useful error.
+13. TypeScript typecheck passes.
+14. Production build passes.
+15. No new browser console errors.
+
+## Completion report
+
+At the end, report:
+
+* Files changed
+* Features completed
+* Audio scheduling method
+* MusicXML limitations
+* Tests performed
+* Build result
+* Known issues
+
+Do not claim the feature is complete unless the new controls affect actual playback behavior.

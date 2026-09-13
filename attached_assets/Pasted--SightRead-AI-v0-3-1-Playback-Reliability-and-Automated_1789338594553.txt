@@ -1,0 +1,142 @@
+# SightRead AI — v0.3.1 Playback Reliability and Automated Tests
+
+You are continuing the existing SightRead AI project.
+
+## Critical rule
+
+Do not rebuild the application.
+
+Do not add new product features yet.
+
+Do not break or remove:
+
+* Landing page
+* `/reader`
+* MusicXML import
+* OpenSheetMusicDisplay rendering
+* Parsed note playback
+* Play
+* Pause
+* Resume
+* Stop
+* Reset
+* Tempo
+* Practice speed
+* Count-in
+* Metronome
+* Volume
+* Mute
+* Measure navigation
+* Range selection
+* Looping
+* Progress indicator
+* Current measure
+* Current note
+* Local settings
+* Existing validation and error states
+
+First inspect the current code and identify the existing playback and parser functions.
+
+## Goal
+
+Create a reliable automated regression-test layer for MusicXML parsing and playback scheduling.
+
+## Test environment
+
+Use the existing project test setup if one exists.
+
+If no test setup exists, add the smallest compatible setup for the current React/Vite/TypeScript project.
+
+Do not add a large testing framework unnecessarily.
+
+## Required parser tests
+
+Create deterministic tests for:
+
+1. Valid single-part MusicXML.
+2. Note pitch parsing.
+3. Octave parsing.
+4. Sharp and flat accidentals.
+5. Note duration parsing.
+6. Different divisions values.
+7. Quarter notes.
+8. Half notes.
+9. Whole notes.
+10. Eighth notes.
+11. Rests.
+12. Chords.
+13. Backup elements.
+14. Forward elements.
+15. Tempo extraction.
+16. Measure extraction.
+17. Empty score rejection.
+18. Invalid XML rejection.
+19. Missing pitch rejection.
+20. Invalid duration rejection.
+21. Multiple-part rejection.
+
+## Required playback tests
+
+Test the scheduling and state logic without requiring real speakers.
+
+Verify:
+
+1. Expected pitch frequency for known notes.
+2. Expected duration in seconds.
+3. BPM conversion.
+4. Practice-speed scaling.
+5. Count-in timing.
+6. Metronome timing.
+7. Rest timing.
+8. Measure start and end boundaries.
+9. Selected playback range.
+10. Loop restart behavior.
+11. Pause state.
+12. Resume position.
+13. Stop/reset state.
+14. Volume state.
+15. Mute state.
+16. Cleanup of scheduled timers and audio nodes.
+
+## Browser integration checks
+
+If the current test environment supports browser testing, add lightweight checks for:
+
+1. Landing page loads.
+2. Try Demo opens `/reader`.
+3. Demo score renders.
+4. Play button is available.
+5. Tempo control is available.
+6. Practice controls are visible.
+7. Invalid MusicXML displays an error.
+8. No blank screen occurs.
+
+Do not claim real audio output has been automatically verified unless the test environment can genuinely verify it.
+
+## Code quality
+
+* Keep parser logic separate from UI.
+* Keep audio scheduling separate from React rendering.
+* Avoid real-time delays in unit tests.
+* Use fake timers or deterministic clock injection where appropriate.
+* Do not create uncontrolled intervals or timers.
+* Do not weaken validation merely to make tests pass.
+* Do not add fake test assertions.
+* Do not test only that functions exist; test actual returned values and state transitions.
+
+## Completion report
+
+Report:
+
+* Test framework used
+* Test files created
+* Number of tests passed
+* Number of tests failed
+* Features not covered
+* Any parser limitations discovered
+* Any playback bugs discovered
+* TypeScript result
+* Production build result
+* Exact commands used
+
+Do not report “complete” if tests are only superficial or if any required test category is knowingly skipped.

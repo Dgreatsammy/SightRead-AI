@@ -23,7 +23,6 @@ import {
   type PlaybackSnapshot,
   type PlaybackState,
 } from '@/lib/playback';
-import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 
 type PracticeSettings = {
   tempo: number;
@@ -208,6 +207,7 @@ export default function Reader() {
       setCurrentMeasure(nextStart);
       setProgress(0);
       setCurrentNoteMidi(null);
+      const { OpenSheetMusicDisplay } = await import('opensheetmusicdisplay');
       const osmd = new OpenSheetMusicDisplay(scoreRef.current, {
         autoResize: true,
         backend: 'svg',

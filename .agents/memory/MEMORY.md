@@ -1,1 +1,2 @@
 - [SightRead artifact build](sightread-build.md) — local production builds require both PORT and BASE_PATH because the artifact Vite config validates them.
+- [Artifact package installs](artifact-package-installs.md) — scope dependency changes with pnpm's artifact filter when the managed installer targets the workspace root.

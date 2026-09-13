@@ -76,9 +76,17 @@ function readTempo(measure: Element, fallback: number) {
   return Number.isFinite(metronomeTempo) && metronomeTempo > 0 ? metronomeTempo : fallback;
 }
 
+export function midiToFrequency(midi: number) {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+export function beatsToSeconds(beats: number, tempo: number, speed = 1) {
+  return (beats * 60) / (tempo * speed);
+}
+
 export function parseMusicXml(source: string): PlaybackScore {
   const document = new DOMParser().parseFromString(source, 'application/xml');
-  if (document.querySelector('parsererror')) {
+  if (document.getElementsByTagName('parsererror').length > 0) {
     throw new Error('The MusicXML document could not be parsed.');
   }
 
@@ -216,11 +224,13 @@ type ActiveVoice = {
 
 export class MusicalPlaybackEngine {
   private readonly onProgress: (snapshot: PlaybackSnapshot) => void;
+  private readonly clock: () => number;
   private score: PlaybackScore | null = null;
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private timer: number | null = null;
   private activeVoices = new Set<ActiveVoice>();
+  private voiceCleanupTimers = new Set<number>();
   private tempo = 76;
   private playbackSpeed = 1;
   private countInBars: CountInBars = 0;
@@ -241,8 +251,9 @@ export class MusicalPlaybackEngine {
   private nextCountInBeat = 0;
   private loopCount = 0;
 
-  constructor(onProgress: (snapshot: PlaybackSnapshot) => void) {
+  constructor(onProgress: (snapshot: PlaybackSnapshot) => void, clock: () => number = () => performance.now()) {
     this.onProgress = onProgress;
+    this.clock = clock;
   }
 
   setScore(score: PlaybackScore) {
@@ -261,14 +272,14 @@ export class MusicalPlaybackEngine {
   setTempo(tempo: number) {
     this.tick();
     this.tempo = Math.max(40, Math.min(160, tempo));
-    this.lastWallTime = performance.now();
+    this.lastWallTime = this.clock();
     this.report();
   }
 
   setPlaybackSpeed(speed: number) {
     this.tick();
     this.playbackSpeed = Math.max(0.25, Math.min(1, speed));
-    this.lastWallTime = performance.now();
+    this.lastWallTime = this.clock();
     this.report();
   }
 
@@ -279,7 +290,7 @@ export class MusicalPlaybackEngine {
       this.countInTotalBeats = 0;
       this.awaitingCountIn = false;
       this.state = 'playing';
-      this.lastWallTime = performance.now();
+      this.lastWallTime = this.clock();
     }
     this.report();
   }
@@ -350,7 +361,7 @@ export class MusicalPlaybackEngine {
     void context.resume();
     if (this.awaitingCountIn && this.countInBars > 0) this.startCountIn();
     this.state = this.isCountingIn() ? 'counting-in' : 'playing';
-    this.lastWallTime = performance.now();
+    this.lastWallTime = this.clock();
     if (this.timer === null) this.timer = window.setInterval(() => this.tick(), 20);
     this.report();
   }
@@ -398,7 +409,7 @@ export class MusicalPlaybackEngine {
 
   private tick() {
     if (!this.score || (this.state !== 'playing' && this.state !== 'counting-in')) return;
-    const now = performance.now();
+    const now = this.clock();
     const deltaBeats = Math.max(0, (now - this.lastWallTime) / 1000) * (this.tempo / 60) * this.playbackSpeed;
     this.lastWallTime = now;
 
@@ -453,11 +464,11 @@ export class MusicalPlaybackEngine {
 
   private playNote(note: PlaybackNote) {
     if (note.isRest || note.midi === null || !this.context) return;
-    const frequency = 440 * Math.pow(2, (note.midi - 69) / 12);
+    const frequency = midiToFrequency(note.midi);
     const now = this.context.currentTime;
     const elapsedBeats = Math.max(0, this.positionBeat - note.startBeat);
     const remainingBeats = Math.max(0.06, note.durationBeats - elapsedBeats);
-    const duration = Math.max(0.06, (remainingBeats * 60) / (this.tempo * this.playbackSpeed));
+    const duration = Math.max(0.06, beatsToSeconds(remainingBeats, this.tempo, this.playbackSpeed));
     const release = Math.min(0.18, duration * 0.4);
     const gain = this.context.createGain();
     const fundamental = this.context.createOscillator();
@@ -480,7 +491,12 @@ export class MusicalPlaybackEngine {
     overtone.stop(now + duration + 0.02);
     const voice = { oscillators: [fundamental, overtone], gain };
     this.activeVoices.add(voice);
-    window.setTimeout(() => this.activeVoices.delete(voice), (duration + 0.05) * 1000);
+    let cleanupTimer = 0;
+    cleanupTimer = window.setTimeout(() => {
+      this.voiceCleanupTimers.delete(cleanupTimer);
+      this.activeVoices.delete(voice);
+    }, (duration + 0.05) * 1000);
+    this.voiceCleanupTimers.add(cleanupTimer);
   }
 
   private playMetronomeClick(strong: boolean) {
@@ -571,6 +587,8 @@ export class MusicalPlaybackEngine {
   private stopVoices() {
     if (!this.context) return;
     const now = this.context.currentTime;
+    this.voiceCleanupTimers.forEach((cleanupTimer) => window.clearTimeout(cleanupTimer));
+    this.voiceCleanupTimers.clear();
     this.activeVoices.forEach((voice) => {
       voice.gain.gain.cancelScheduledValues(now);
       voice.gain.gain.setValueAtTime(0.0001, now);

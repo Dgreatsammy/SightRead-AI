@@ -63,6 +63,8 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
     emptyOutDir: true,
+    // OpenSheetMusicDisplay is a required but heavy, lazy-loaded vendor chunk.
+    chunkSizeWarningLimit: 1300,
   },
   server: {
     port,

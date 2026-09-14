@@ -16,8 +16,21 @@ export interface PlaybackMeasure {
   durationBeats: number;
 }
 
+export interface PlaybackPart {
+  id: string;
+  name: string;
+  displayName: string;
+  tempo: number;
+  notes: PlaybackNote[];
+  measures: PlaybackMeasure[];
+  beatsPerBar: number;
+  beatUnitBeats: number;
+}
+
 export interface PlaybackScore {
   title: string;
+  parts: PlaybackPart[];
+  selectedPartId: string;
   tempo: number;
   notes: PlaybackNote[];
   measures: PlaybackMeasure[];
@@ -84,35 +97,12 @@ export function beatsToSeconds(beats: number, tempo: number, speed = 1) {
   return (beats * 60) / (tempo * speed);
 }
 
-export function parseMusicXml(source: string): PlaybackScore {
-  const document = new DOMParser().parseFromString(source, 'application/xml');
-  if (document.getElementsByTagName('parsererror').length > 0) {
-    throw new Error('The MusicXML document could not be parsed.');
-  }
-
-  const root = document.documentElement;
-  if (!root || root.tagName.toLowerCase() !== 'score-partwise') {
-    throw new Error('Only partwise MusicXML scores are supported for practice playback.');
-  }
-
-  const parts = Array.from(document.getElementsByTagName('part'));
-  if (parts.length === 0) {
-    throw new Error('The MusicXML score does not contain a part.');
-  }
-  if (parts.length > 1) {
-    throw new Error('This score contains multiple parts. Practice playback currently supports one part at a time.');
-  }
-
-  const part = parts[0];
+function parsePart(part: Element, id: string, displayName: string): PlaybackPart {
   const measureElements = Array.from(part.getElementsByTagName('measure'));
   if (measureElements.length === 0) {
-    throw new Error('The MusicXML score does not contain any measures.');
+    throw new Error(`The MusicXML part "${displayName}" does not contain any measures.`);
   }
 
-  const title =
-    textOf(document, 'work-title') ||
-    textOf(document, 'movement-title') ||
-    'Imported score';
   let divisions = 1;
   let beatsPerMeasure = 4;
   let beatType = 4;
@@ -128,7 +118,7 @@ export function parseMusicXml(source: string): PlaybackScore {
     if (attributes) {
       const parsedDivisions = numberOf(attributes, 'divisions', divisions);
       if (!Number.isFinite(parsedDivisions) || parsedDivisions <= 0) {
-        throw new Error('The score contains invalid rhythmic divisions.');
+        throw new Error(`The MusicXML part "${displayName}" contains invalid rhythmic divisions.`);
       }
       divisions = parsedDivisions;
       const time = attributes.getElementsByTagName('time')[0];
@@ -154,7 +144,7 @@ export function parseMusicXml(source: string): PlaybackScore {
         const durationText = textOf(child, 'duration');
         const duration = Number(durationText);
         if (!durationText || !Number.isFinite(duration) || duration < 0) {
-          throw new Error('The score contains an invalid backup or forward duration.');
+          throw new Error(`The MusicXML part "${displayName}" contains an invalid backup or forward duration.`);
         }
         if (tagName === 'backup') {
           cursor = Math.max(0, cursor - duration);
@@ -172,7 +162,7 @@ export function parseMusicXml(source: string): PlaybackScore {
       const isRest = child.getElementsByTagName('rest').length > 0;
       const midi = isRest ? null : pitchToMidi(child);
       if (!isRest && midi === null) {
-        throw new Error('The score contains a note without a valid pitch. Unsupported notes were not played.');
+        throw new Error(`The MusicXML part "${displayName}" contains a note without a valid pitch. Unsupported notes were not played.`);
       }
       localNotes.push({ start, duration, midi, isRest });
       if (!isChord) {
@@ -203,17 +193,83 @@ export function parseMusicXml(source: string): PlaybackScore {
   });
 
   if (!notes.some((note) => !note.isRest && note.midi !== null)) {
-    throw new Error('The MusicXML score does not contain any playable notes.');
+    throw new Error(`The MusicXML part "${displayName}" does not contain any playable notes.`);
   }
 
   notes.sort((left, right) => left.startBeat - right.startBeat);
   return {
-    title,
+    id,
+    name: displayName,
+    displayName,
     tempo,
     notes,
     measures,
     beatsPerBar: firstBeatsPerBar,
     beatUnitBeats: firstBeatUnitBeats,
+  };
+}
+
+export function selectPlaybackPart(score: PlaybackScore, partId: string): PlaybackScore {
+  const selectedPart = score.parts.find((part) => part.id === partId);
+  if (!selectedPart) {
+    throw new Error(`The requested practice part "${partId}" was not found.`);
+  }
+  return {
+    title: score.title,
+    parts: score.parts,
+    selectedPartId: selectedPart.id,
+    tempo: selectedPart.tempo,
+    notes: selectedPart.notes,
+    measures: selectedPart.measures,
+    beatsPerBar: selectedPart.beatsPerBar,
+    beatUnitBeats: selectedPart.beatUnitBeats,
+  };
+}
+
+export function parseMusicXml(source: string): PlaybackScore {
+  const document = new DOMParser().parseFromString(source, 'application/xml');
+  if (document.getElementsByTagName('parsererror').length > 0) {
+    throw new Error('The MusicXML document could not be parsed.');
+  }
+
+  const root = document.documentElement;
+  if (!root || root.tagName.toLowerCase() !== 'score-partwise') {
+    throw new Error('Only partwise MusicXML scores are supported for practice playback.');
+  }
+
+  const parts = Array.from(document.getElementsByTagName('part'));
+  if (parts.length === 0) {
+    throw new Error('The MusicXML score does not contain a part.');
+  }
+
+  const title =
+    textOf(document, 'work-title') ||
+    textOf(document, 'movement-title') ||
+    'Imported score';
+
+  const scorePartDefinitions = Array.from(document.getElementsByTagName('score-part'));
+  const definitionById = new Map(
+    scorePartDefinitions
+      .map((definition) => [definition.getAttribute('id')?.trim() ?? '', definition] as const)
+      .filter(([id]) => id.length > 0),
+  );
+  const parsedParts = parts.map((part, index) => {
+    const partId = part.getAttribute('id')?.trim() || scorePartDefinitions[index]?.getAttribute('id')?.trim() || `P${index + 1}`;
+    const definition = definitionById.get(partId) ?? scorePartDefinitions[index];
+    const partName = definition ? textOf(definition, 'part-name') : '';
+    const displayName = partName || `Part ${index + 1}`;
+    return parsePart(part, partId, displayName);
+  });
+  const firstPart = parsedParts[0];
+  return {
+    title,
+    parts: parsedParts,
+    selectedPartId: firstPart.id,
+    tempo: firstPart.tempo,
+    notes: firstPart.notes,
+    measures: firstPart.measures,
+    beatsPerBar: firstPart.beatsPerBar,
+    beatUnitBeats: firstPart.beatUnitBeats,
   };
 }
 

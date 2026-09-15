@@ -1,12 +1,12 @@
-import { DOMParser } from '@xmldom/xmldom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DOMParser } from "@xmldom/xmldom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   beatsToSeconds,
   midiToFrequency,
   MusicalPlaybackEngine,
   parseMusicXml,
   type PlaybackSnapshot,
-} from './playback';
+} from "./playback";
 
 type NoteOptions = {
   step?: string;
@@ -18,27 +18,30 @@ type NoteOptions = {
 };
 
 function note({
-  step = 'C',
+  step = "C",
   octave = 4,
   alter,
   duration = 1,
   rest = false,
   chord = false,
 }: NoteOptions = {}) {
-  if (rest) return `<note>${chord ? '<chord/>' : ''}<rest/><duration>${duration}</duration><type>quarter</type></note>`;
-  return `<note>${chord ? '<chord/>' : ''}<pitch><step>${step}</step><octave>${octave}</octave>${alter === undefined ? '' : `<alter>${alter}</alter>`}</pitch><duration>${duration}</duration><type>quarter</type></note>`;
+  if (rest)
+    return `<note>${chord ? "<chord/>" : ""}<rest/><duration>${duration}</duration><type>quarter</type></note>`;
+  return `<note>${chord ? "<chord/>" : ""}<pitch><step>${step}</step><octave>${octave}</octave>${alter === undefined ? "" : `<alter>${alter}</alter>`}</pitch><duration>${duration}</duration><type>quarter</type></note>`;
 }
 
-function measure(number: number, body: string, attributes = '') {
+function measure(number: number, body: string, attributes = "") {
   return `<measure number="${number}">${attributes}${body}</measure>`;
 }
 
-function scoreXml(measures: string, extraParts = '') {
-  return `<score-partwise version="3.1"><work><work-title>Test Study</work-title></work><part-list><score-part id="P1"><part-name>Piano</part-name></score-part>${extraParts ? '<score-part id="P2"><part-name>Second</part-name></score-part>' : ''}</part-list><part id="P1">${measures}</part>${extraParts}</score-partwise>`;
+function scoreXml(measures: string, extraParts = "") {
+  return `<score-partwise version="3.1"><work><work-title>Test Study</work-title></work><part-list><score-part id="P1"><part-name>Piano</part-name></score-part>${extraParts ? '<score-part id="P2"><part-name>Second</part-name></score-part>' : ""}</part-list><part id="P1">${measures}</part>${extraParts}</score-partwise>`;
 }
 
-const fourFour = '<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>';
-const oneFour = '<attributes><divisions>1</divisions><time><beats>1</beats><beat-type>4</beat-type></time></attributes>';
+const fourFour =
+  "<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>";
+const oneFour =
+  "<attributes><divisions>1</divisions><time><beats>1</beats><beat-type>4</beat-type></time></attributes>";
 
 class FakeParam {
   value = 0;
@@ -46,26 +49,30 @@ class FakeParam {
 
   setValueAtTime(value: number, time: number) {
     this.value = value;
-    this.events.push({ method: 'setValueAtTime', value, time });
+    this.events.push({ method: "setValueAtTime", value, time });
   }
 
   setTargetAtTime(value: number, time: number, constant: number) {
     this.value = value;
-    this.events.push({ method: 'setTargetAtTime', value, time: time + constant });
+    this.events.push({
+      method: "setTargetAtTime",
+      value,
+      time: time + constant,
+    });
   }
 
   exponentialRampToValueAtTime(value: number, time: number) {
     this.value = value;
-    this.events.push({ method: 'exponentialRampToValueAtTime', value, time });
+    this.events.push({ method: "exponentialRampToValueAtTime", value, time });
   }
 
   cancelScheduledValues(time: number) {
-    this.events.push({ method: 'cancelScheduledValues', value: 0, time });
+    this.events.push({ method: "cancelScheduledValues", value: 0, time });
   }
 }
 
 class FakeOscillator {
-  type = 'sine';
+  type = "sine";
   frequency = new FakeParam();
   started = false;
   stopped = false;
@@ -100,7 +107,7 @@ class FakeAudioContext {
   destination = {};
   oscillators: FakeOscillator[] = [];
   masterGain: FakeGain | null = null;
-  state = 'suspended';
+  state = "suspended";
 
   constructor() {
     FakeAudioContext.latest = this;
@@ -123,11 +130,11 @@ class FakeAudioContext {
   }
 
   async resume() {
-    this.state = 'running';
+    this.state = "running";
   }
 
   async close() {
-    this.state = 'closed';
+    this.state = "closed";
   }
 }
 
@@ -140,11 +147,18 @@ async function advance(ms: number) {
   }
 }
 
-function createEngine(score = parseMusicXml(scoreXml(
-  `${measure(1, note({ duration: 1 }), oneFour)}${measure(2, note({ step: 'D', duration: 1 }), oneFour)}`,
-))) {
+function createEngine(
+  score = parseMusicXml(
+    scoreXml(
+      `${measure(1, note({ duration: 1 }), oneFour)}${measure(2, note({ step: "D", duration: 1 }), oneFour)}`,
+    ),
+  ),
+) {
   const snapshots: PlaybackSnapshot[] = [];
-  const engine = new MusicalPlaybackEngine((snapshot) => snapshots.push(snapshot), () => currentClock);
+  const engine = new MusicalPlaybackEngine(
+    (snapshot) => snapshots.push(snapshot),
+    () => currentClock,
+  );
   engine.setScore(score);
   return { engine, snapshots };
 }
@@ -152,8 +166,8 @@ function createEngine(score = parseMusicXml(scoreXml(
 beforeEach(() => {
   currentClock = 0;
   vi.useFakeTimers();
-  vi.stubGlobal('DOMParser', DOMParser);
-  vi.stubGlobal('window', {
+  vi.stubGlobal("DOMParser", DOMParser);
+  vi.stubGlobal("window", {
     AudioContext: FakeAudioContext,
     setInterval,
     clearInterval,
@@ -168,70 +182,127 @@ afterEach(() => {
   FakeAudioContext.latest = null;
 });
 
-describe('MusicXML parser', () => {
-  it('parses a valid single-part score and extracts title, tempo, and measures', () => {
-    const source = scoreXml(`${measure(7, `<direction><sound tempo="92"/></direction>${note()}`, fourFour)}`);
+describe("MusicXML parser", () => {
+  it("parses a valid single-part score and extracts title, tempo, and measures", () => {
+    const source = scoreXml(
+      `${measure(7, `<direction><sound tempo="92"/></direction>${note()}`, fourFour)}`,
+    );
     const parsed = parseMusicXml(source);
-    expect(parsed.title).toBe('Test Study');
+    expect(parsed.title).toBe("Test Study");
     expect(parsed.tempo).toBe(92);
     expect(parsed.measures).toHaveLength(1);
-    expect(parsed.measures[0]).toMatchObject({ number: '7', startBeat: 0, durationBeats: 4 });
+    expect(parsed.measures[0]).toMatchObject({
+      number: "7",
+      startBeat: 0,
+      durationBeats: 4,
+    });
   });
 
-  it('parses pitches, octaves, sharps, flats, and note durations', () => {
-    const parsed = parseMusicXml(scoreXml(
-      measure(1, `${note({ step: 'C', octave: 3, duration: 1 })}${note({ step: 'F', octave: 4, alter: 1, duration: 2 })}${note({ step: 'B', octave: 3, alter: -1, duration: 4 })}${note({ step: 'E', octave: 5, duration: 8 })}`, fourFour),
-    ));
+  it("parses pitches, octaves, sharps, flats, and note durations", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(
+          1,
+          `${note({ step: "C", octave: 3, duration: 1 })}${note({ step: "F", octave: 4, alter: 1, duration: 2 })}${note({ step: "B", octave: 3, alter: -1, duration: 4 })}${note({ step: "E", octave: 5, duration: 8 })}`,
+          fourFour,
+        ),
+      ),
+    );
     expect(parsed.notes.map((item) => item.midi)).toEqual([48, 66, 58, 76]);
-    expect(parsed.notes.map((item) => item.durationBeats)).toEqual([1, 2, 4, 8]);
+    expect(parsed.notes.map((item) => item.durationBeats)).toEqual([
+      1, 2, 4, 8,
+    ]);
   });
 
-  it('converts different divisions into quarter-note beats', () => {
-    const parsed = parseMusicXml(scoreXml(
-      measure(1, `${note({ duration: 2 })}${note({ duration: 4 })}`, '<attributes><divisions>2</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>'),
-    ));
+  it("converts different divisions into quarter-note beats", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(
+          1,
+          `${note({ duration: 2 })}${note({ duration: 4 })}`,
+          "<attributes><divisions>2</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>",
+        ),
+      ),
+    );
     expect(parsed.notes.map((item) => item.durationBeats)).toEqual([1, 2]);
     expect(parsed.measures[0].durationBeats).toBe(4);
   });
 
-  it('handles quarter, half, whole, and eighth note values', () => {
-    const parsed = parseMusicXml(scoreXml(
-      measure(1, `${note({ duration: 1 })}${note({ duration: 2 })}${note({ duration: 4 })}${note({ duration: 0.5 })}`, '<attributes><divisions>1</divisions><time><beats>8</beats><beat-type>4</beat-type></time></attributes>'),
-    ));
-    expect(parsed.notes.map((item) => item.durationBeats)).toEqual([1, 2, 4, 0.5]);
+  it("handles quarter, half, whole, and eighth note values", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(
+          1,
+          `${note({ duration: 1 })}${note({ duration: 2 })}${note({ duration: 4 })}${note({ duration: 0.5 })}`,
+          "<attributes><divisions>1</divisions><time><beats>8</beats><beat-type>4</beat-type></time></attributes>",
+        ),
+      ),
+    );
+    expect(parsed.notes.map((item) => item.durationBeats)).toEqual([
+      1, 2, 4, 0.5,
+    ]);
   });
 
-  it('preserves rests as silent notes', () => {
-    const parsed = parseMusicXml(scoreXml(measure(1, `${note({ rest: true, duration: 1 })}${note({ duration: 1 })}`, fourFour)));
-    expect(parsed.notes[0]).toMatchObject({ isRest: true, midi: null, durationBeats: 1 });
-    expect(parsed.notes[1]).toMatchObject({ isRest: false, midi: 60, startBeat: 1 });
+  it("preserves rests as silent notes", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(
+          1,
+          `${note({ rest: true, duration: 1 })}${note({ duration: 1 })}`,
+          fourFour,
+        ),
+      ),
+    );
+    expect(parsed.notes[0]).toMatchObject({
+      isRest: true,
+      midi: null,
+      durationBeats: 1,
+    });
+    expect(parsed.notes[1]).toMatchObject({
+      isRest: false,
+      midi: 60,
+      startBeat: 1,
+    });
   });
 
-  it('handles chords, backup elements, and forward elements', () => {
-    const body = `${note({ duration: 1 })}${note({ step: 'E', duration: 1, chord: true })}<backup><duration>1</duration></backup><forward><duration>1</duration></forward>${note({ rest: true, duration: 1 })}`;
+  it("handles chords, backup elements, and forward elements", () => {
+    const body = `${note({ duration: 1 })}${note({ step: "E", duration: 1, chord: true })}<backup><duration>1</duration></backup><forward><duration>1</duration></forward>${note({ rest: true, duration: 1 })}`;
     const parsed = parseMusicXml(scoreXml(measure(1, body, fourFour)));
-    expect(parsed.notes.map((item) => [item.midi, item.startBeat, item.isRest])).toEqual([
+    expect(
+      parsed.notes.map((item) => [item.midi, item.startBeat, item.isRest]),
+    ).toEqual([
       [60, 0, false],
       [64, 0, false],
       [null, 1, true],
     ]);
   });
 
-  it('rejects empty scores, invalid XML, missing pitch, and invalid duration', () => {
-    expect(() => parseMusicXml(scoreXml(''))).toThrow(/measures|playable/i);
-    expect(() => parseMusicXml('<score-partwise><part>')).toThrow();
-    expect(() => parseMusicXml(scoreXml(measure(1, '<note><duration>1</duration></note>', fourFour)))).toThrow(/pitch/i);
-    expect(() => parseMusicXml(scoreXml(measure(1, note({ duration: 0 }), fourFour)))).toThrow(/duration/i);
+  it("rejects empty scores, invalid XML, missing pitch, and invalid duration", () => {
+    expect(() => parseMusicXml(scoreXml(""))).toThrow(/measures|playable/i);
+    expect(() => parseMusicXml("<score-partwise><part>")).toThrow();
+    expect(() =>
+      parseMusicXml(
+        scoreXml(measure(1, "<note><duration>1</duration></note>", fourFour)),
+      ),
+    ).toThrow(/pitch/i);
+    expect(() =>
+      parseMusicXml(scoreXml(measure(1, note({ duration: 0 }), fourFour))),
+    ).toThrow(/duration/i);
   });
 
-  it('rejects multiple-part scores instead of silently choosing one', () => {
+  it("accepts multiple-part scores and exposes all parts", () => {
     const secondPart = `<part id="P2">${measure(1, note(), fourFour)}</part>`;
-    expect(() => parseMusicXml(scoreXml(measure(1, note(), fourFour), secondPart))).toThrow(/multiple parts/i);
+    const score = parseMusicXml(
+      scoreXml(measure(1, note(), fourFour), secondPart),
+    );
+    expect(score.parts).toHaveLength(2);
+    expect(score.selectedPartId).toBe("P1");
+    expect(score.parts.map((part) => part.id)).toEqual(["P1", "P2"]);
   });
 });
 
-describe('timing helpers', () => {
-  it('calculates known pitch frequencies and BPM durations', () => {
+describe("timing helpers", () => {
+  it("calculates known pitch frequencies and BPM durations", () => {
     expect(midiToFrequency(69)).toBeCloseTo(440, 8);
     expect(midiToFrequency(60)).toBeCloseTo(261.6256, 3);
     expect(beatsToSeconds(1, 60)).toBe(1);
@@ -240,47 +311,63 @@ describe('timing helpers', () => {
   });
 });
 
-describe('playback engine', () => {
-  it('plays note timing with BPM and practice-speed scaling', async () => {
+describe("playback engine", () => {
+  it("plays note timing with BPM and practice-speed scaling", async () => {
     const { engine } = createEngine();
     engine.setTempo(60);
     engine.setPlaybackSpeed(0.5);
     engine.play();
     await advance(20);
-    const oscillator = FakeAudioContext.latest?.oscillators.find((item) => item.frequency.value > 200);
+    const oscillator = FakeAudioContext.latest?.oscillators.find(
+      (item) => item.frequency.value > 200,
+    );
     expect(oscillator?.frequency.value).toBeCloseTo(midiToFrequency(60), 3);
     expect(oscillator?.stopTime).toBeCloseTo(2, 1);
   });
 
-  it('runs an audible count-in without moving the score position', async () => {
+  it("runs an audible count-in without moving the score position", async () => {
     const score = parseMusicXml(scoreXml(measure(1, note(), fourFour)));
     const { engine, snapshots } = createEngine(score);
     engine.setTempo(60);
     engine.setCountInBars(1);
     engine.play();
-    expect(snapshots.at(-1)?.state).toBe('counting-in');
+    expect(snapshots.at(-1)?.state).toBe("counting-in");
     await advance(3980);
-    expect(snapshots.at(-1)?.state).toBe('counting-in');
+    expect(snapshots.at(-1)?.state).toBe("counting-in");
     expect(snapshots.at(-1)?.positionBeat).toBe(0);
     await advance(40);
-    expect(snapshots.at(-1)?.state).toBe('playing');
-    const countInClicks = FakeAudioContext.latest?.oscillators.filter((item) => item.frequency.value === 1320 || item.frequency.value === 880);
+    expect(snapshots.at(-1)?.state).toBe("playing");
+    const countInClicks = FakeAudioContext.latest?.oscillators.filter(
+      (item) => item.frequency.value === 1320 || item.frequency.value === 880,
+    );
     expect(countInClicks).toHaveLength(4);
   });
 
-  it('schedules strong and weak metronome beats at the selected tempo', async () => {
-    const score = parseMusicXml(scoreXml(measure(1, note({ duration: 4 }), fourFour)));
+  it("schedules strong and weak metronome beats at the selected tempo", async () => {
+    const score = parseMusicXml(
+      scoreXml(measure(1, note({ duration: 4 }), fourFour)),
+    );
     const { engine } = createEngine(score);
     engine.setTempo(60);
     engine.setMetronome(true);
     engine.play();
     await advance(1050);
-    const clickFrequencies = FakeAudioContext.latest?.oscillators.map((item) => item.frequency.value).filter((value) => value === 1320 || value === 880);
+    const clickFrequencies = FakeAudioContext.latest?.oscillators
+      .map((item) => item.frequency.value)
+      .filter((value) => value === 1320 || value === 880);
     expect(clickFrequencies).toEqual(expect.arrayContaining([1320, 880]));
   });
 
-  it('keeps rests silent while advancing their timing', async () => {
-    const score = parseMusicXml(scoreXml(measure(1, `${note({ rest: true, duration: 1 })}${note({ duration: 1 })}`, oneFour)));
+  it("keeps rests silent while advancing their timing", async () => {
+    const score = parseMusicXml(
+      scoreXml(
+        measure(
+          1,
+          `${note({ rest: true, duration: 1 })}${note({ duration: 1 })}`,
+          oneFour,
+        ),
+      ),
+    );
     const { engine } = createEngine(score);
     engine.setTempo(60);
     engine.play();
@@ -290,35 +377,39 @@ describe('playback engine', () => {
     expect(FakeAudioContext.latest?.oscillators.length).toBeGreaterThan(0);
   });
 
-  it('respects measure boundaries and selected playback ranges', async () => {
+  it("respects measure boundaries and selected playback ranges", async () => {
     const { engine, snapshots } = createEngine();
     engine.setRange(1, 1);
     engine.setTempo(60);
     engine.play();
     expect(snapshots.at(-1)?.currentMeasure).toBe(1);
     await advance(1050);
-    expect(snapshots.at(-1)).toMatchObject({ state: 'stopped', currentMeasure: 1, progress: 1 });
+    expect(snapshots.at(-1)).toMatchObject({
+      state: "stopped",
+      currentMeasure: 1,
+      progress: 1,
+    });
   });
 
-  it('restarts the selected range and increments loop count', async () => {
+  it("restarts the selected range and increments loop count", async () => {
     const { engine, snapshots } = createEngine();
     engine.setRange(0, 0);
     engine.setTempo(60);
     engine.setLoop(true);
     engine.play();
     await advance(2150);
-    expect(snapshots.at(-1)?.state).toBe('playing');
+    expect(snapshots.at(-1)?.state).toBe("playing");
     expect(snapshots.at(-1)?.loopCount).toBeGreaterThanOrEqual(2);
   });
 
-  it('pauses and resumes from the current position', async () => {
+  it("pauses and resumes from the current position", async () => {
     const { engine, snapshots } = createEngine();
     engine.setTempo(60);
     engine.play();
     await advance(500);
     engine.pause();
     const pausedPosition = snapshots.at(-1)?.positionBeat ?? 0;
-    expect(snapshots.at(-1)?.state).toBe('paused');
+    expect(snapshots.at(-1)?.state).toBe("paused");
     await advance(500);
     expect(snapshots.at(-1)?.positionBeat).toBeCloseTo(pausedPosition, 2);
     engine.play();
@@ -326,17 +417,25 @@ describe('playback engine', () => {
     expect(snapshots.at(-1)?.positionBeat).toBeGreaterThan(pausedPosition);
   });
 
-  it('stops and resets to the selected range or score beginning', () => {
+  it("stops and resets to the selected range or score beginning", () => {
     const { engine, snapshots } = createEngine();
     engine.setRange(1, 1);
     engine.seekMeasure(1);
     engine.stop();
-    expect(snapshots.at(-1)).toMatchObject({ state: 'stopped', currentMeasure: 1, progress: 0 });
+    expect(snapshots.at(-1)).toMatchObject({
+      state: "stopped",
+      currentMeasure: 1,
+      progress: 0,
+    });
     engine.reset();
-    expect(snapshots.at(-1)).toMatchObject({ state: 'stopped', currentMeasure: 0, progress: 0 });
+    expect(snapshots.at(-1)).toMatchObject({
+      state: "stopped",
+      currentMeasure: 0,
+      progress: 0,
+    });
   });
 
-  it('routes volume and mute changes through the master gain', () => {
+  it("routes volume and mute changes through the master gain", () => {
     const { engine } = createEngine();
     engine.play();
     const context = FakeAudioContext.latest!;
@@ -348,7 +447,7 @@ describe('playback engine', () => {
     expect(context.masterGain?.gain.value).toBeCloseTo(0.4);
   });
 
-  it('cleans up interval, voice cleanup timers, and audio nodes on stop and dispose', async () => {
+  it("cleans up interval, voice cleanup timers, and audio nodes on stop and dispose", async () => {
     const { engine } = createEngine();
     engine.play();
     await advance(20);
@@ -356,6 +455,6 @@ describe('playback engine', () => {
     engine.stop();
     expect(vi.getTimerCount()).toBe(0);
     engine.dispose();
-    expect(FakeAudioContext.latest?.state).toBe('closed');
+    expect(FakeAudioContext.latest?.state).toBe("closed");
   });
 });

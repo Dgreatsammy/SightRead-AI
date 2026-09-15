@@ -1,4 +1,4 @@
-export type PlaybackState = 'stopped' | 'playing' | 'paused' | 'counting-in';
+export type PlaybackState = "stopped" | "playing" | "paused" | "counting-in";
 export type CountInBars = 0 | 1 | 2;
 
 export interface PlaybackNote {
@@ -51,42 +51,61 @@ export interface PlaybackSnapshot {
 }
 
 function textOf(parent: Document | Element, tagName: string) {
-  return parent.getElementsByTagName(tagName)[0]?.textContent?.trim() ?? '';
+  return parent.getElementsByTagName(tagName)[0]?.textContent?.trim() ?? "";
 }
 
 function numberOf(parent: Element, tagName: string, fallback: number) {
-  const value = Number(textOf(parent, tagName));
+  const raw = textOf(parent, tagName);
+  if (raw === "") return fallback;
+  const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
 }
 
 function requiredDuration(note: Element) {
-  const durationText = textOf(note, 'duration');
+  const durationText = textOf(note, "duration");
   const duration = Number(durationText);
   if (!durationText || !Number.isFinite(duration) || duration <= 0) {
-    throw new Error('The score contains a note with an invalid duration.');
+    throw new Error(
+      `The score contains a note with an invalid duration: ${note.outerHTML}`,
+    );
   }
   return duration;
 }
 
 function pitchToMidi(note: Element) {
-  const pitch = note.getElementsByTagName('pitch')[0];
+  const pitch = note.getElementsByTagName("pitch")[0];
   if (!pitch) return null;
-  const step = textOf(pitch, 'step').toUpperCase();
-  const octave = Number(textOf(pitch, 'octave'));
-  const alter = Number(textOf(pitch, 'alter') || '0');
-  const semitones: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-  if (!(step in semitones) || !Number.isFinite(octave) || !Number.isFinite(alter)) return null;
+  const step = textOf(pitch, "step").toUpperCase();
+  const octave = Number(textOf(pitch, "octave"));
+  const alter = Number(textOf(pitch, "alter") || "0");
+  const semitones: Record<string, number> = {
+    C: 0,
+    D: 2,
+    E: 4,
+    F: 5,
+    G: 7,
+    A: 9,
+    B: 11,
+  };
+  if (
+    !(step in semitones) ||
+    !Number.isFinite(octave) ||
+    !Number.isFinite(alter)
+  )
+    return null;
   return (octave + 1) * 12 + semitones[step] + alter;
 }
 
 function readTempo(measure: Element, fallback: number) {
-  const sound = measure.getElementsByTagName('sound')[0];
-  const soundTempo = sound ? Number(sound.getAttribute('tempo')) : NaN;
+  const sound = measure.getElementsByTagName("sound")[0];
+  const soundTempo = sound ? Number(sound.getAttribute("tempo")) : NaN;
   if (Number.isFinite(soundTempo) && soundTempo > 0) return soundTempo;
 
-  const perMinute = measure.getElementsByTagName('per-minute')[0];
+  const perMinute = measure.getElementsByTagName("per-minute")[0];
   const metronomeTempo = perMinute ? Number(perMinute.textContent) : NaN;
-  return Number.isFinite(metronomeTempo) && metronomeTempo > 0 ? metronomeTempo : fallback;
+  return Number.isFinite(metronomeTempo) && metronomeTempo > 0
+    ? metronomeTempo
+    : fallback;
 }
 
 export function midiToFrequency(midi: number) {
@@ -97,10 +116,16 @@ export function beatsToSeconds(beats: number, tempo: number, speed = 1) {
   return (beats * 60) / (tempo * speed);
 }
 
-function parsePart(part: Element, id: string, displayName: string): PlaybackPart {
-  const measureElements = Array.from(part.getElementsByTagName('measure'));
+function parsePart(
+  part: Element,
+  id: string,
+  displayName: string,
+): PlaybackPart {
+  const measureElements = Array.from(part.getElementsByTagName("measure"));
   if (measureElements.length === 0) {
-    throw new Error(`The MusicXML part "${displayName}" does not contain any measures.`);
+    throw new Error(
+      `The MusicXML part "${displayName}" does not contain any measures.`,
+    );
   }
 
   let divisions = 1;
@@ -114,17 +139,19 @@ function parsePart(part: Element, id: string, displayName: string): PlaybackPart
   const measures: PlaybackMeasure[] = [];
 
   measureElements.forEach((measureElement, measureIndex) => {
-    const attributes = measureElement.getElementsByTagName('attributes')[0];
+    const attributes = measureElement.getElementsByTagName("attributes")[0];
     if (attributes) {
-      const parsedDivisions = numberOf(attributes, 'divisions', divisions);
+      const parsedDivisions = numberOf(attributes, "divisions", divisions);
       if (!Number.isFinite(parsedDivisions) || parsedDivisions <= 0) {
-        throw new Error(`The MusicXML part "${displayName}" contains invalid rhythmic divisions.`);
+        throw new Error(
+          `The MusicXML part "${displayName}" contains invalid rhythmic divisions.`,
+        );
       }
       divisions = parsedDivisions;
-      const time = attributes.getElementsByTagName('time')[0];
+      const time = attributes.getElementsByTagName("time")[0];
       if (time) {
-        beatsPerMeasure = Math.max(1, numberOf(time, 'beats', beatsPerMeasure));
-        beatType = Math.max(1, numberOf(time, 'beat-type', beatType));
+        beatsPerMeasure = Math.max(1, numberOf(time, "beats", beatsPerMeasure));
+        beatType = Math.max(1, numberOf(time, "beat-type", beatType));
       }
     }
     if (measureIndex === 0) {
@@ -136,17 +163,24 @@ function parsePart(part: Element, id: string, displayName: string): PlaybackPart
     let cursor = 0;
     let maxCursor = 0;
     let lastNoteStart = 0;
-    const localNotes: Array<{ start: number; duration: number; midi: number | null; isRest: boolean }> = [];
+    const localNotes: Array<{
+      start: number;
+      duration: number;
+      midi: number | null;
+      isRest: boolean;
+    }> = [];
 
     Array.from(measureElement.children).forEach((child) => {
       const tagName = child.tagName.toLowerCase();
-      if (tagName === 'backup' || tagName === 'forward') {
-        const durationText = textOf(child, 'duration');
+      if (tagName === "backup" || tagName === "forward") {
+        const durationText = textOf(child, "duration");
         const duration = Number(durationText);
         if (!durationText || !Number.isFinite(duration) || duration < 0) {
-          throw new Error(`The MusicXML part "${displayName}" contains an invalid backup or forward duration.`);
+          throw new Error(
+            `The MusicXML part "${displayName}" contains an invalid backup or forward duration.`,
+          );
         }
-        if (tagName === 'backup') {
+        if (tagName === "backup") {
           cursor = Math.max(0, cursor - duration);
         } else {
           cursor += duration;
@@ -154,15 +188,31 @@ function parsePart(part: Element, id: string, displayName: string): PlaybackPart
         }
         return;
       }
-      if (tagName !== 'note') return;
+      if (tagName !== "note") return;
+
+      const isGrace = child.getElementsByTagName("grace").length > 0;
+      if (isGrace) return;
 
       const duration = requiredDuration(child);
-      const isChord = child.getElementsByTagName('chord').length > 0;
+      const isChord = child.getElementsByTagName("chord").length > 0;
       const start = isChord ? lastNoteStart : cursor;
-      const isRest = child.getElementsByTagName('rest').length > 0;
+      const isRest = child.getElementsByTagName("rest").length > 0;
+      const isUnpitched = child.getElementsByTagName("unpitched").length > 0;
+
+      if (isUnpitched) {
+        if (!isChord) {
+          lastNoteStart = cursor;
+          cursor += duration;
+        }
+        maxCursor = Math.max(maxCursor, cursor);
+        return;
+      }
+
       const midi = isRest ? null : pitchToMidi(child);
       if (!isRest && midi === null) {
-        throw new Error(`The MusicXML part "${displayName}" contains a note without a valid pitch. Unsupported notes were not played.`);
+        throw new Error(
+          `The MusicXML part "${displayName}" contains a note without a valid pitch: ${child.outerHTML}`,
+        );
       }
       localNotes.push({ start, duration, midi, isRest });
       if (!isChord) {
@@ -173,10 +223,14 @@ function parsePart(part: Element, id: string, displayName: string): PlaybackPart
     });
 
     const expectedDuration = (beatsPerMeasure * 4) / beatType;
-    const durationBeats = Math.max(expectedDuration, maxCursor / divisions, 0.25);
+    const durationBeats = Math.max(
+      expectedDuration,
+      maxCursor / divisions,
+      0.25,
+    );
     measures.push({
       index: measureIndex,
-      number: measureElement.getAttribute('number') || String(measureIndex + 1),
+      number: measureElement.getAttribute("number") || String(measureIndex + 1),
       startBeat: absoluteMeasureStart,
       durationBeats,
     });
@@ -192,10 +246,6 @@ function parsePart(part: Element, id: string, displayName: string): PlaybackPart
     absoluteMeasureStart += durationBeats;
   });
 
-  if (!notes.some((note) => !note.isRest && note.midi !== null)) {
-    throw new Error(`The MusicXML part "${displayName}" does not contain any playable notes.`);
-  }
-
   notes.sort((left, right) => left.startBeat - right.startBeat);
   return {
     id,
@@ -209,7 +259,10 @@ function parsePart(part: Element, id: string, displayName: string): PlaybackPart
   };
 }
 
-export function selectPlaybackPart(score: PlaybackScore, partId: string): PlaybackScore {
+export function selectPlaybackPart(
+  score: PlaybackScore,
+  partId: string,
+): PlaybackScore {
   const selectedPart = score.parts.find((part) => part.id === partId);
   if (!selectedPart) {
     throw new Error(`The requested practice part "${partId}" was not found.`);
@@ -227,36 +280,47 @@ export function selectPlaybackPart(score: PlaybackScore, partId: string): Playba
 }
 
 export function parseMusicXml(source: string): PlaybackScore {
-  const document = new DOMParser().parseFromString(source, 'application/xml');
-  if (document.getElementsByTagName('parsererror').length > 0) {
-    throw new Error('The MusicXML document could not be parsed.');
+  const document = new DOMParser().parseFromString(source, "application/xml");
+  if (document.getElementsByTagName("parsererror").length > 0) {
+    throw new Error("The MusicXML document could not be parsed.");
   }
 
   const root = document.documentElement;
-  if (!root || root.tagName.toLowerCase() !== 'score-partwise') {
-    throw new Error('Only partwise MusicXML scores are supported for practice playback.');
+  if (!root || root.tagName.toLowerCase() !== "score-partwise") {
+    throw new Error(
+      "Only partwise MusicXML scores are supported for practice playback.",
+    );
   }
 
-  const parts = Array.from(document.getElementsByTagName('part'));
+  const parts = Array.from(document.getElementsByTagName("part"));
   if (parts.length === 0) {
-    throw new Error('The MusicXML score does not contain a part.');
+    throw new Error("The MusicXML score does not contain a part.");
   }
 
   const title =
-    textOf(document, 'work-title') ||
-    textOf(document, 'movement-title') ||
-    'Imported score';
+    textOf(document, "work-title") ||
+    textOf(document, "movement-title") ||
+    "Imported score";
 
-  const scorePartDefinitions = Array.from(document.getElementsByTagName('score-part'));
+  const scorePartDefinitions = Array.from(
+    document.getElementsByTagName("score-part"),
+  );
   const definitionById = new Map(
     scorePartDefinitions
-      .map((definition) => [definition.getAttribute('id')?.trim() ?? '', definition] as const)
+      .map(
+        (definition) =>
+          [definition.getAttribute("id")?.trim() ?? "", definition] as const,
+      )
       .filter(([id]) => id.length > 0),
   );
   const parsedParts = parts.map((part, index) => {
-    const partId = part.getAttribute('id')?.trim() || scorePartDefinitions[index]?.getAttribute('id')?.trim() || `P${index + 1}`;
-    const definition = definitionById.get(partId) ?? scorePartDefinitions[index];
-    const partName = definition ? textOf(definition, 'part-name') : '';
+    const partId =
+      part.getAttribute("id")?.trim() ||
+      scorePartDefinitions[index]?.getAttribute("id")?.trim() ||
+      `P${index + 1}`;
+    const definition =
+      definitionById.get(partId) ?? scorePartDefinitions[index];
+    const partName = definition ? textOf(definition, "part-name") : "";
     const displayName = partName || `Part ${index + 1}`;
     return parsePart(part, partId, displayName);
   });
@@ -300,14 +364,17 @@ export class MusicalPlaybackEngine {
   private lastWallTime = 0;
   private nextNoteIndex = 0;
   private nextMetronomeBeat = 0;
-  private state: PlaybackState = 'stopped';
+  private state: PlaybackState = "stopped";
   private awaitingCountIn = true;
   private countInElapsedBeats = 0;
   private countInTotalBeats = 0;
   private nextCountInBeat = 0;
   private loopCount = 0;
 
-  constructor(onProgress: (snapshot: PlaybackSnapshot) => void, clock: () => number = () => performance.now()) {
+  constructor(
+    onProgress: (snapshot: PlaybackSnapshot) => void,
+    clock: () => number = () => performance.now(),
+  ) {
     this.onProgress = onProgress;
     this.clock = clock;
   }
@@ -341,11 +408,11 @@ export class MusicalPlaybackEngine {
 
   setCountInBars(countInBars: CountInBars) {
     this.countInBars = countInBars;
-    if (this.state === 'counting-in' && countInBars === 0) {
+    if (this.state === "counting-in" && countInBars === 0) {
       this.countInElapsedBeats = 0;
       this.countInTotalBeats = 0;
       this.awaitingCountIn = false;
-      this.state = 'playing';
+      this.state = "playing";
       this.lastWallTime = this.clock();
     }
     this.report();
@@ -376,9 +443,15 @@ export class MusicalPlaybackEngine {
 
   setRange(startMeasure: number, endMeasure: number) {
     if (!this.score) return;
-    const wasPlaying = this.state === 'playing' || this.state === 'counting-in';
-    this.rangeStart = Math.max(0, Math.min(startMeasure, this.score.measures.length - 1));
-    this.rangeEnd = Math.max(this.rangeStart, Math.min(endMeasure, this.score.measures.length - 1));
+    const wasPlaying = this.state === "playing" || this.state === "counting-in";
+    this.rangeStart = Math.max(
+      0,
+      Math.min(startMeasure, this.score.measures.length - 1),
+    );
+    this.rangeEnd = Math.max(
+      this.rangeStart,
+      Math.min(endMeasure, this.score.measures.length - 1),
+    );
     this.positionBeat = this.rangeStartBeat();
     this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
     this.nextMetronomeBeat = this.positionBeat;
@@ -386,7 +459,7 @@ export class MusicalPlaybackEngine {
     this.armCountIn();
     this.stopVoices();
     if (wasPlaying) {
-      this.state = 'stopped';
+      this.state = "stopped";
       this.clearTimer();
     }
     this.report();
@@ -394,7 +467,10 @@ export class MusicalPlaybackEngine {
 
   seekMeasure(measureIndex: number) {
     if (!this.score) return;
-    const nextMeasure = Math.max(0, Math.min(measureIndex, this.score.measures.length - 1));
+    const nextMeasure = Math.max(
+      0,
+      Math.min(measureIndex, this.score.measures.length - 1),
+    );
     this.positionBeat = this.score.measures[nextMeasure]?.startBeat ?? 0;
     this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
     this.nextMetronomeBeat = this.positionBeat;
@@ -416,26 +492,28 @@ export class MusicalPlaybackEngine {
     if (!context) return;
     void context.resume();
     if (this.awaitingCountIn && this.countInBars > 0) this.startCountIn();
-    this.state = this.isCountingIn() ? 'counting-in' : 'playing';
+    this.state = this.isCountingIn() ? "counting-in" : "playing";
     this.lastWallTime = this.clock();
-    if (this.timer === null) this.timer = window.setInterval(() => this.tick(), 20);
+    if (this.timer === null)
+      this.timer = window.setInterval(() => this.tick(), 20);
     this.report();
   }
 
   pause() {
-    if (this.state !== 'playing' && this.state !== 'counting-in') return;
+    if (this.state !== "playing" && this.state !== "counting-in") return;
     this.tick();
     this.clearTimer();
     this.stopVoices();
-    if (this.state === 'playing') this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
-    this.state = 'paused';
+    if (this.state === "playing")
+      this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
+    this.state = "paused";
     this.report();
   }
 
   stop() {
     this.clearTimer();
     this.stopVoices();
-    this.state = 'stopped';
+    this.state = "stopped";
     if (this.score) {
       this.positionBeat = this.rangeStartBeat();
       this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
@@ -464,18 +542,29 @@ export class MusicalPlaybackEngine {
   }
 
   private tick() {
-    if (!this.score || (this.state !== 'playing' && this.state !== 'counting-in')) return;
+    if (
+      !this.score ||
+      (this.state !== "playing" && this.state !== "counting-in")
+    )
+      return;
     const now = this.clock();
-    const deltaBeats = Math.max(0, (now - this.lastWallTime) / 1000) * (this.tempo / 60) * this.playbackSpeed;
+    const deltaBeats =
+      Math.max(0, (now - this.lastWallTime) / 1000) *
+      (this.tempo / 60) *
+      this.playbackSpeed;
     this.lastWallTime = now;
 
-    if (this.state === 'counting-in') {
+    if (this.state === "counting-in") {
       this.countInElapsedBeats += deltaBeats;
       while (
-        this.nextCountInBeat * this.score.beatUnitBeats < this.countInTotalBeats - 0.0001 &&
-        this.nextCountInBeat * this.score.beatUnitBeats <= this.countInElapsedBeats + 0.0001
+        this.nextCountInBeat * this.score.beatUnitBeats <
+          this.countInTotalBeats - 0.0001 &&
+        this.nextCountInBeat * this.score.beatUnitBeats <=
+          this.countInElapsedBeats + 0.0001
       ) {
-        this.playMetronomeClick(this.nextCountInBeat % this.score.beatsPerBar === 0);
+        this.playMetronomeClick(
+          this.nextCountInBeat % this.score.beatsPerBar === 0,
+        );
         this.nextCountInBeat += 1;
       }
       if (this.countInElapsedBeats >= this.countInTotalBeats) {
@@ -501,7 +590,7 @@ export class MusicalPlaybackEngine {
         this.positionBeat = rangeEndBeat;
         this.clearTimer();
         this.stopVoices();
-        this.state = 'stopped';
+        this.state = "stopped";
         this.awaitingCountIn = true;
         this.report();
         return;
@@ -524,19 +613,28 @@ export class MusicalPlaybackEngine {
     const now = this.context.currentTime;
     const elapsedBeats = Math.max(0, this.positionBeat - note.startBeat);
     const remainingBeats = Math.max(0.06, note.durationBeats - elapsedBeats);
-    const duration = Math.max(0.06, beatsToSeconds(remainingBeats, this.tempo, this.playbackSpeed));
+    const duration = Math.max(
+      0.06,
+      beatsToSeconds(remainingBeats, this.tempo, this.playbackSpeed),
+    );
     const release = Math.min(0.18, duration * 0.4);
     const gain = this.context.createGain();
     const fundamental = this.context.createOscillator();
     const overtone = this.context.createOscillator();
-    fundamental.type = 'triangle';
-    overtone.type = 'sine';
+    fundamental.type = "triangle";
+    overtone.type = "sine";
     fundamental.frequency.setValueAtTime(frequency, now);
     overtone.frequency.setValueAtTime(frequency * 2, now);
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(0.16, now + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.055, now + Math.min(0.12, duration * 0.35));
-    gain.gain.setValueAtTime(0.055, Math.max(now + 0.02, now + duration - release));
+    gain.gain.exponentialRampToValueAtTime(
+      0.055,
+      now + Math.min(0.12, duration * 0.35),
+    );
+    gain.gain.setValueAtTime(
+      0.055,
+      Math.max(now + 0.02, now + duration - release),
+    );
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     fundamental.connect(gain);
     overtone.connect(gain);
@@ -548,10 +646,13 @@ export class MusicalPlaybackEngine {
     const voice = { oscillators: [fundamental, overtone], gain };
     this.activeVoices.add(voice);
     let cleanupTimer = 0;
-    cleanupTimer = window.setTimeout(() => {
-      this.voiceCleanupTimers.delete(cleanupTimer);
-      this.activeVoices.delete(voice);
-    }, (duration + 0.05) * 1000);
+    cleanupTimer = window.setTimeout(
+      () => {
+        this.voiceCleanupTimers.delete(cleanupTimer);
+        this.activeVoices.delete(voice);
+      },
+      (duration + 0.05) * 1000,
+    );
     this.voiceCleanupTimers.add(cleanupTimer);
   }
 
@@ -560,7 +661,7 @@ export class MusicalPlaybackEngine {
     const now = this.context.currentTime;
     const oscillator = this.context.createOscillator();
     const gain = this.context.createGain();
-    oscillator.type = 'square';
+    oscillator.type = "square";
     oscillator.frequency.setValueAtTime(strong ? 1320 : 880, now);
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(strong ? 0.12 : 0.065, now + 0.004);
@@ -574,9 +675,14 @@ export class MusicalPlaybackEngine {
   private schedulePlaybackMetronome(rangeEndBeat: number) {
     if (!this.score) return;
     const unit = this.score.beatUnitBeats;
-    while (this.nextMetronomeBeat <= this.positionBeat + 0.0001 && this.nextMetronomeBeat < rangeEndBeat) {
+    while (
+      this.nextMetronomeBeat <= this.positionBeat + 0.0001 &&
+      this.nextMetronomeBeat < rangeEndBeat
+    ) {
       const measure = this.measureAt(this.nextMetronomeBeat);
-      const beatInMeasure = measure ? Math.round((this.nextMetronomeBeat - measure.startBeat) / unit) : 0;
+      const beatInMeasure = measure
+        ? Math.round((this.nextMetronomeBeat - measure.startBeat) / unit)
+        : 0;
       this.playMetronomeClick(beatInMeasure === 0);
       this.nextMetronomeBeat += unit;
     }
@@ -586,7 +692,8 @@ export class MusicalPlaybackEngine {
     if (this.context) return this.context;
     const AudioContextClass =
       window.AudioContext ||
-      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
     if (!AudioContextClass) return null;
     this.context = new AudioContextClass();
     this.masterGain = this.context.createGain();
@@ -597,14 +704,18 @@ export class MusicalPlaybackEngine {
 
   private ensureMasterGain() {
     if (!this.masterGain && !this.ensureContext()) {
-      throw new Error('Web Audio is not available in this browser.');
+      throw new Error("Web Audio is not available in this browser.");
     }
     return this.masterGain!;
   }
 
   private updateMasterGain() {
     if (!this.masterGain || !this.context) return;
-    this.masterGain.gain.setTargetAtTime(this.muted ? 0 : this.volume, this.context.currentTime, 0.01);
+    this.masterGain.gain.setTargetAtTime(
+      this.muted ? 0 : this.volume,
+      this.context.currentTime,
+      0.01,
+    );
   }
 
   private startCountIn() {
@@ -613,11 +724,12 @@ export class MusicalPlaybackEngine {
       this.countInTotalBeats = 0;
       return;
     }
-    this.countInTotalBeats = this.countInBars * this.score.beatsPerBar * this.score.beatUnitBeats;
+    this.countInTotalBeats =
+      this.countInBars * this.score.beatsPerBar * this.score.beatUnitBeats;
     this.countInElapsedBeats = 0;
     this.nextCountInBeat = 0;
     this.awaitingCountIn = false;
-    this.state = 'counting-in';
+    this.state = "counting-in";
   }
 
   private finishCountIn() {
@@ -626,7 +738,7 @@ export class MusicalPlaybackEngine {
     this.positionBeat = this.rangeStartBeat();
     this.nextNoteIndex = this.findNoteIndex(this.positionBeat);
     this.nextMetronomeBeat = this.positionBeat;
-    this.state = 'playing';
+    this.state = "playing";
   }
 
   private armCountIn() {
@@ -637,13 +749,18 @@ export class MusicalPlaybackEngine {
   }
 
   private isCountingIn() {
-    return this.countInTotalBeats > 0 && this.countInElapsedBeats < this.countInTotalBeats;
+    return (
+      this.countInTotalBeats > 0 &&
+      this.countInElapsedBeats < this.countInTotalBeats
+    );
   }
 
   private stopVoices() {
     if (!this.context) return;
     const now = this.context.currentTime;
-    this.voiceCleanupTimers.forEach((cleanupTimer) => window.clearTimeout(cleanupTimer));
+    this.voiceCleanupTimers.forEach((cleanupTimer) =>
+      window.clearTimeout(cleanupTimer),
+    );
     this.voiceCleanupTimers.clear();
     this.activeVoices.forEach((voice) => {
       voice.gain.gain.cancelScheduledValues(now);
@@ -676,7 +793,9 @@ export class MusicalPlaybackEngine {
 
   private findNoteIndex(positionBeat: number) {
     if (!this.score) return 0;
-    const index = this.score.notes.findIndex((note) => note.startBeat + note.durationBeats > positionBeat + 0.0001);
+    const index = this.score.notes.findIndex(
+      (note) => note.startBeat + note.durationBeats > positionBeat + 0.0001,
+    );
     return index < 0 ? this.score.notes.length : index;
   }
 
@@ -690,12 +809,16 @@ export class MusicalPlaybackEngine {
   }
 
   private report() {
-    const durationBeats = Math.max(0, this.rangeEndBeat() - this.rangeStartBeat());
+    const durationBeats = Math.max(
+      0,
+      this.rangeEndBeat() - this.rangeStartBeat(),
+    );
     const foundMeasureIndex =
       this.score?.measures.findIndex(
         (measure, index) =>
           this.positionBeat >= measure.startBeat &&
-          (index === this.score!.measures.length - 1 || this.positionBeat < this.score!.measures[index + 1].startBeat),
+          (index === this.score!.measures.length - 1 ||
+            this.positionBeat < this.score!.measures[index + 1].startBeat),
       ) ?? 0;
     const measureIndex =
       this.positionBeat >= this.rangeEndBeat()
@@ -710,7 +833,16 @@ export class MusicalPlaybackEngine {
         this.positionBeat >= note.startBeat &&
         this.positionBeat < note.startBeat + note.durationBeats,
     );
-    const progress = durationBeats === 0 ? 0 : Math.max(0, Math.min(1, (this.positionBeat - this.rangeStartBeat()) / durationBeats));
+    const progress =
+      durationBeats === 0
+        ? 0
+        : Math.max(
+            0,
+            Math.min(
+              1,
+              (this.positionBeat - this.rangeStartBeat()) / durationBeats,
+            ),
+          );
     this.onProgress({
       state: this.state,
       currentMeasure: Math.max(0, measureIndex),
@@ -718,8 +850,17 @@ export class MusicalPlaybackEngine {
       progress,
       positionBeat: this.positionBeat,
       durationBeats,
-      countInBeat: this.isCountingIn() ? Math.min(this.nextCountInBeat, Math.ceil(this.countInTotalBeats / (this.score?.beatUnitBeats ?? 1))) : 0,
-      countInBeatsTotal: this.isCountingIn() ? Math.ceil(this.countInTotalBeats / (this.score?.beatUnitBeats ?? 1)) : 0,
+      countInBeat: this.isCountingIn()
+        ? Math.min(
+            this.nextCountInBeat,
+            Math.ceil(
+              this.countInTotalBeats / (this.score?.beatUnitBeats ?? 1),
+            ),
+          )
+        : 0,
+      countInBeatsTotal: this.isCountingIn()
+        ? Math.ceil(this.countInTotalBeats / (this.score?.beatUnitBeats ?? 1))
+        : 0,
       loopCount: this.loopCount,
     });
   }

@@ -347,32 +347,91 @@ export default function Reader() {
     scoreRef.current?.scrollTo({ left: (next - 1) * 260, behavior: "smooth" });
   };
 
-  const handleImport = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleImport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const content = typeof reader.result === "string" ? reader.result : "";
-      if (!isMusicXml(content)) {
-        setScoreStatus("error");
-        setErrorText(
-          "This file is not MusicXML. Choose a .musicxml or .xml score to continue.",
+
+    const isXmlFile =
+      /\.musicxml$|\.xml$/i.test(file.name) ||
+      file.type === "application/xml" ||
+      file.type === "text/xml";
+
+    try {
+      setScoreStatus("loading");
+      setErrorText("");
+
+      if (isXmlFile) {
+        const content = await file.text();
+
+        if (!isMusicXml(content)) {
+          setScoreStatus("error");
+          setErrorText(
+            "This file is not valid MusicXML. Choose a valid .musicxml or .xml score.",
+          );
+          return;
+        }
+
+        setScoreTitle(
+          file.name.replace(/\.(musicxml|xml)$/i, "") || "Imported score",
         );
+        setXml(content);
+        setCurrentMeasure(1);
+        setProgress(0);
         return;
       }
+
+      const isImageOrPdf =
+        /\.(png|jpe?g|pdf)$/i.test(file.name) ||
+        ["image/png", "image/jpeg", "application/pdf"].includes(file.type);
+
+      if (!isImageOrPdf) {
+        setScoreStatus("error");
+        setErrorText("Choose a MusicXML, PNG, JPG, JPEG, or PDF score.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/omr", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = (await response.json()) as {
+        success?: boolean;
+        musicXml?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !data.success || !data.musicXml) {
+        throw new Error(
+          data.error || "The score could not be converted to MusicXML.",
+        );
+      }
+
+      if (!isMusicXml(data.musicXml)) {
+        throw new Error(
+          "Audiveris returned invalid MusicXML. Please try another score.",
+        );
+      }
+
       setScoreTitle(
-        file.name.replace(/\.(musicxml|xml)$/i, "") || "Imported score",
+        file.name.replace(/\.(png|jpe?g|pdf)$/i, "") || "Imported score",
       );
-      setXml(content);
+      setXml(data.musicXml);
       setCurrentMeasure(1);
       setProgress(0);
-    };
-    reader.onerror = () => {
+    } catch (error) {
       setScoreStatus("error");
-      setErrorText("We could not open that file. Please try it again.");
-    };
-    reader.readAsText(file);
-    event.target.value = "";
+      setErrorText(
+        error instanceof Error
+          ? error.message
+          : "We could not process that score. Please try again.",
+      );
+    } finally {
+      event.target.value = "";
+    }
   };
 
   const measureCount = score?.measures.length ?? 0;
@@ -421,18 +480,18 @@ export default function Reader() {
             type="button"
             onClick={() => fileInputRef.current?.click()}
             className="inline-flex items-center gap-2 rounded-full border border-[#627286] px-3 py-2 text-[11px] font-bold uppercase tracking-[.12em] text-[#e9e3d8] transition-colors hover:border-[#ef8b70] hover:text-[#ef8b70]"
-            data-testid="button-import-musicxml"
+            data-testid="button-import-score"
           >
             <FileUp size={15} />{" "}
-            <span className="hidden sm:inline">Import MusicXML</span>
+            <span className="hidden sm:inline">Import Score</span>
           </button>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".xml,.musicxml,application/xml,text/xml"
+            accept=".xml,.musicxml,.png,.jpg,.jpeg,.pdf,application/xml,text/xml,image/png,image/jpeg,application/pdf"
             className="hidden"
             onChange={handleImport}
-            data-testid="input-musicxml-file"
+            data-testid="input-score-file"
           />
         </div>
       </header>

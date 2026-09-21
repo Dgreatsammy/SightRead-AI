@@ -1,0 +1,63 @@
+## EXECUTION RULE — SightRead AI Deployment Fix
+
+Continue fixing the current `libXtst.so.6` deployment issue, but work with a strict execution-first approach.
+
+**My Replit credits are limited. Do not spend extended time investigating, explaining possibilities, or exploring unrelated architecture. Make the smallest practical fix, test it, and move forward.**
+
+### Objective
+
+Get the current Audiveris-based unified server working in the public deployment.
+
+The success condition is:
+
+`Public score image upload → Audiveris → MusicXML → SightRead score display`
+
+### Work rules
+
+1. Inspect only the files and configuration directly related to the current error.
+2. Make a practical fix for the missing native library.
+3. Use the available Nix environment to locate `libXtst.so.6` dynamically. Do not hardcode a temporary machine-specific store hash.
+4. Preserve the existing Audiveris installation and unified Express architecture.
+5. Do not rebuild the app, change frameworks, introduce Oemer, or add unrelated features.
+6. Do not repeatedly rerun expensive builds without changing anything.
+7. Do not stop after saying that a fix is theoretically correct.
+8. Run a focused test immediately after the fix.
+9. If a test fails, fix the specific failure rather than starting a broad investigation.
+10. Keep changes small and explain them briefly.
+
+### Required acceptance tests
+
+Run only the relevant checks:
+
+* Frontend build
+* API typecheck
+* API build
+* Unified server startup
+* `GET /reader`
+* `GET /api/healthz`
+* Real `POST /api/omr` using an available score image
+
+Confirm:
+
+* `/reader` returns HTTP 200.
+* API health returns HTTP 200.
+* OMR no longer references Oemer.
+* Audiveris can start without the missing `libXtst.so.6` error.
+* A real score image produces MusicXML, or report the exact remaining blocker.
+
+### Deployment requirement
+
+Once the local deployment-style test passes, check the actual Replit deployment configuration and provide the exact next deployment action.
+
+Do not claim the public deployment is fixed until the public endpoint has been tested.
+
+### Final response
+
+Keep the report concise:
+
+1. Fix applied
+2. Test result
+3. Remaining blocker, if any
+4. Exact next action
+
+Prioritize working software over extended explanations.

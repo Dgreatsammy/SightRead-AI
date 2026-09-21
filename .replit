@@ -32,4 +32,5 @@ path = "scripts/post-merge.sh"
 timeoutMs = 20000
 
 [nix]
-packages = ["zulu", "flatpak", "gtk3", "pkgconfigUpstream", "libXtst", "psmisc"]
+packages = ["zulu", "flatpak", "gtk3", "pkgconfigUpstream", "libXtst", "psmisc", "xorg.libX11", "xorg.libXext", "xorg.libXi", "xorg.libXrender", "xorg.libXtst"]
+channel = "stable-25_05"

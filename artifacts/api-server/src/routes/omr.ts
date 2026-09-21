@@ -5,6 +5,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 const router: IRouter = Router();
 
@@ -17,11 +18,14 @@ const upload = multer({
 
 const execFileAsync = promisify(execFile);
 
-const AUDIVERIS_JAVA =
-  "/home/runner/workspace/tools/audiveris/runtime/opt/audiveris/lib/runtime/bin/java";
-
-const AUDIVERIS_APP =
-  "/home/runner/workspace/tools/audiveris/runtime/opt/audiveris/lib/app";
+const serverDistDir = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(serverDistDir, "../../..");
+const audiverisRoot =
+  process.env["AUDIVERIS_HOME"] ||
+  path.join(projectRoot, "tools/audiveris/runtime/opt/audiveris");
+const audiverisRuntime = path.join(audiverisRoot, "lib/runtime");
+const AUDIVERIS_JAVA = path.join(audiverisRuntime, "bin/java");
+const AUDIVERIS_APP = path.join(audiverisRoot, "lib/app");
 
 router.post("/omr", upload.single("file"), async (req, res) => {
   if (!req.file) {
@@ -45,6 +49,7 @@ router.post("/omr", upload.single("file"), async (req, res) => {
     await execFileAsync(
       AUDIVERIS_JAVA,
       [
+        "-Djava.awt.headless=true",
         "-Dsun.java2d.uiScale=1",
         "--enable-native-access=ALL-UNNAMED",
         "-cp",
@@ -59,6 +64,23 @@ router.post("/omr", upload.single("file"), async (req, res) => {
       ],
       {
         maxBuffer: 10 * 1024 * 1024,
+        env: {
+          ...process.env,
+          JAVA_HOME: audiverisRuntime,
+          LD_LIBRARY_PATH: [
+            path.join(audiverisRuntime, "lib"),
+            process.env["LD_LIBRARY_PATH"],
+            process.env["NIX_LD_LIBRARY_PATH"],
+          ]
+            .filter(Boolean)
+            .join(path.delimiter),
+          PATH: [
+            path.join(audiverisRuntime, "bin"),
+            process.env["PATH"],
+          ]
+            .filter(Boolean)
+            .join(path.delimiter),
+        },
       },
     );
 

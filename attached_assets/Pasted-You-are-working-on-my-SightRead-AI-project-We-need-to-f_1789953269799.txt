@@ -1,0 +1,122 @@
+You are working on my SightRead AI project. We need to finish and verify the existing Audiveris OMR integration and public deployment. **Do not rebuild the application or introduce unrelated features.**
+
+## Current project state
+
+* Frontend: React + Vite + OpenSheetMusicDisplay
+* Backend: Node.js + Express
+* OMR engine: Audiveris 5.11.0
+* Frontend and API are intended to run in one unified Express server.
+* GitHub repository: Dgreatsammy/SightRead-AI
+* Root deployment command: `pnpm run deploy`
+* The deployment script builds the frontend, builds the API, and starts Express.
+* The API endpoint is `/api/omr`.
+* Audiveris converts uploaded PNG/JPG/PDF files into MusicXML.
+* Direct MusicXML import and playback already exist.
+
+## Critical current problem
+
+The public Replit application still returns this old error when importing an image:
+
+`spawn /tmp/sightread-oemer-test/bin/oemer ENOENT`
+
+This indicates that the public `/api/omr` request is still reaching an old Oemer service or stale deployment instead of the current Audiveris-based Express API.
+
+## Your task
+
+Investigate and fix the actual public deployment routing.
+
+### Step 1 — Inspect before changing anything
+
+Inspect:
+
+1. Root `.replit`
+2. Root `package.json`
+3. `artifacts/api-server/src/app.ts`
+4. `artifacts/api-server/src/index.ts`
+5. `artifacts/api-server/src/routes/omr.ts`
+6. `artifacts/sightread-ai/vite.config.ts`
+7. All Replit workflows and deployment configuration
+8. Any remaining references to:
+
+   * `oemer`
+   * `sightread-oemer-test`
+   * `/api/omr`
+   * old API services
+   * old ports and proxy targets
+
+Use repository search commands to identify every remaining Oemer reference. Do not assume the old service is gone.
+
+### Step 2 — Verify the intended architecture
+
+The intended production flow is:
+
+Browser
+→ unified Express server
+→ `/api/omr`
+→ Audiveris Java CLI
+→ MusicXML extraction
+→ frontend score rendering
+
+The production server must serve both:
+
+* The built frontend, including `/reader`
+* The Express API, including `/api/omr`
+
+The public deployment must not route `/api/omr` to the old Oemer service.
+
+### Step 3 — Fix the root cause
+
+Make the smallest safe changes necessary to ensure that the public Replit deployment uses the current unified Express server.
+
+Important requirements:
+
+* Do not remove Audiveris.
+* Do not replace Audiveris with Oemer.
+* Do not break direct MusicXML import.
+* Do not break existing playback functionality.
+* Do not add authentication, payments, databases, or unrelated features.
+* Preserve the current deployment configuration unless a specific issue requires changing it.
+* Ensure the deployment receives a valid `PORT` environment variable.
+* Ensure Audiveris can locate its Java runtime and required native libraries in deployment.
+* Do not hardcode a temporary local testing port as the production port.
+* Do not claim the public deployment is fixed until you verify it.
+
+### Step 4 — Test locally
+
+Run the appropriate checks:
+
+```bash
+pnpm --filter @workspace/sightread-ai run build
+pnpm --filter @workspace/api-server run typecheck
+pnpm --filter @workspace/api-server run build
+```
+
+Then test:
+
+1. `GET /reader` returns HTTP 200.
+2. `POST /api/omr` with a valid score image.
+3. The response contains valid MusicXML.
+4. The response does not reference Oemer.
+5. The server starts using the deployment's supplied `PORT`.
+
+Use a real test image if one is available. Do not commit large test images or private files to Git.
+
+### Step 5 — Check public deployment
+
+After applying the fix, explain exactly how the current Replit deployment must be redeployed or restarted.
+
+Verify the public `/reader` route and public `/api/omr` route separately.
+
+If the public URL still reaches the old Oemer service, identify where that routing is configured instead of merely rerunning the local server.
+
+### Final response format
+
+Report:
+
+1. Root cause found
+2. Files changed
+3. Tests executed and results
+4. Whether the public deployment was actually verified
+5. The next single action I should take
+
+Do not make broad product changes. Focus only on fixing and verifying the Audiveris-based public deployment.

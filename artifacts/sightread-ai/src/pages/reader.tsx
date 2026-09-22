@@ -455,6 +455,8 @@ export default function Reader() {
         ? "Playing"
         : playback === "paused"
           ? "Paused"
+        : playback === "completed"
+          ? "Practice complete"
           : "Ready";
 
   return (

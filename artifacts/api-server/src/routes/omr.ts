@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { extractMusicXmlFromMxl } from "../lib/mxl.js";
 
 const router: IRouter = Router();
 
@@ -46,53 +47,68 @@ router.post("/omr", upload.single("file"), async (req, res) => {
 
     const classpath = jarFiles.join(path.delimiter);
 
-    await execFileAsync(
-      AUDIVERIS_JAVA,
-      [
-        "-Djava.awt.headless=true",
-        "-Dsun.java2d.uiScale=1",
-        "--enable-native-access=ALL-UNNAMED",
-        "-cp",
-        classpath,
-        "org.audiveris.omr.Main",
-        "-batch",
-        "-transcribe",
-        "-export",
-        "-output",
-        outputDir,
-        req.file.path,
-      ],
-      {
-        maxBuffer: 10 * 1024 * 1024,
-        env: {
-          ...process.env,
-          JAVA_HOME: audiverisRuntime,
-          LD_LIBRARY_PATH: [
-            path.join(audiverisRuntime, "lib"),
-            process.env["LD_LIBRARY_PATH"],
-            process.env["NIX_LD_LIBRARY_PATH"],
-          ]
-            .filter(Boolean)
-            .join(path.delimiter),
-          PATH: [
-            path.join(audiverisRuntime, "bin"),
-            process.env["PATH"],
-          ]
-            .filter(Boolean)
-            .join(path.delimiter),
+    try {
+      await execFileAsync(
+        AUDIVERIS_JAVA,
+        [
+          "-Djava.awt.headless=true",
+          "-Dsun.java2d.uiScale=1",
+          "--enable-native-access=ALL-UNNAMED",
+          "-cp",
+          classpath,
+          "org.audiveris.omr.Main",
+          "-batch",
+          "-transcribe",
+          "-export",
+          "-output",
+          outputDir,
+          req.file.path,
+        ],
+        {
+          maxBuffer: 10 * 1024 * 1024,
+          env: {
+            ...process.env,
+            JAVA_HOME: audiverisRuntime,
+            LD_LIBRARY_PATH: [
+              path.join(audiverisRuntime, "lib"),
+              process.env["LD_LIBRARY_PATH"],
+              process.env["NIX_LD_LIBRARY_PATH"],
+            ]
+              .filter(Boolean)
+              .join(path.delimiter),
+            PATH: [
+              path.join(audiverisRuntime, "bin"),
+              process.env["PATH"],
+            ]
+              .filter(Boolean)
+              .join(path.delimiter),
+          },
         },
-      },
-    );
+      );
+    } catch (error) {
+      throw new Error(formatAudiverisFailure(error));
+    }
 
-    const files = await fs.readdir(outputDir);
-    const musicXmlFile = files.find((file) => /\.mxl$/i.test(file));
+    const files = await listFilesRecursive(outputDir);
+    const musicXmlFile =
+      files.find((file) => /\.mxl$/i.test(file)) ??
+      files.find(
+        (file) =>
+          /\.(musicxml|xml)$/i.test(file) &&
+          !/META-INF[/\\]container\.xml$/i.test(file),
+      );
 
     if (!musicXmlFile) {
-      throw new Error("Audiveris completed but did not produce MusicXML.");
+      const outputSummary = files.length > 0 ? ` Output files: ${files.join(", ")}.` : "";
+      throw new Error(
+        `Audiveris completed but did not produce MusicXML.${outputSummary}`,
+      );
     }
 
     const mxlPath = path.join(outputDir, musicXmlFile);
-    const xml = await extractMusicXmlFromMxl(mxlPath);
+    const xml = /\.mxl$/i.test(musicXmlFile)
+      ? await extractMusicXmlFromMxl(mxlPath)
+      : await fs.readFile(mxlPath, "utf8");
 
     res.json({
       success: true,
@@ -129,32 +145,37 @@ async function collectJarFiles(directory: string): Promise<string[]> {
   return jars;
 }
 
-async function extractMusicXmlFromMxl(mxlPath: string): Promise<string> {
-  const extractDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "sightread-mxl-"),
-  );
+async function listFilesRecursive(directory: string, relativeDirectory = ""): Promise<string[]> {
+  const entries = await fs.readdir(path.join(directory, relativeDirectory), {
+    withFileTypes: true,
+  });
+  const files: string[] = [];
 
-  try {
-    const { execFileSync } = await import("node:child_process");
-
-    execFileSync("unzip", ["-q", "-o", mxlPath, "-d", extractDir]);
-
-    const containerPath = path.join(extractDir, "META-INF", "container.xml");
-    const containerXml = await fs.readFile(containerPath, "utf8");
-
-    const rootfileMatch = containerXml.match(
-      /full-path=["']([^"']+)["']/i,
-    );
-
-    if (!rootfileMatch) {
-      throw new Error("Audiveris MXL did not contain a root MusicXML file.");
+  for (const entry of entries) {
+    const relativePath = path.join(relativeDirectory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await listFilesRecursive(directory, relativePath)));
+    } else if (entry.isFile()) {
+      files.push(relativePath);
     }
-
-    const xmlPath = path.join(extractDir, rootfileMatch[1]);
-    return await fs.readFile(xmlPath, "utf8");
-  } finally {
-    await fs.rm(extractDir, { recursive: true, force: true }).catch(() => {});
   }
+
+  return files;
+}
+
+function formatAudiverisFailure(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return "Audiveris failed while processing the score.";
+  }
+
+  const details = error as { message?: unknown; stderr?: unknown };
+  const message =
+    typeof details.message === "string"
+      ? details.message
+      : "Audiveris failed while processing the score.";
+  const stderr =
+    typeof details.stderr === "string" ? details.stderr.trim() : "";
+  return stderr ? `${message} ${stderr}` : message;
 }
 
 export default router;

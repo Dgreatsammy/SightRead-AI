@@ -385,10 +385,52 @@ describe("playback engine", () => {
     expect(snapshots.at(-1)?.currentMeasure).toBe(1);
     await advance(1050);
     expect(snapshots.at(-1)).toMatchObject({
-      state: "stopped",
+      state: "completed",
       currentMeasure: 1,
       progress: 1,
     });
+  });
+
+  it("schedules the final note before completing after a large clock step", async () => {
+    const score = parseMusicXml(
+      scoreXml(
+        `${measure(1, note({ duration: 1 }), oneFour)}${measure(2, note({ step: "D", duration: 1 }), oneFour)}`,
+      ),
+    );
+    const { engine, snapshots } = createEngine(score);
+    engine.setTempo(60);
+    engine.play();
+
+    await advance(1900);
+
+    const playedPitches = FakeAudioContext.latest?.oscillators
+      .map((oscillator) => oscillator.frequency.value)
+      .filter((frequency) => frequency > 200);
+    expect(playedPitches).toEqual(
+      expect.arrayContaining([midiToFrequency(60), midiToFrequency(62)]),
+    );
+    expect(snapshots.at(-1)?.state).toBe("playing");
+    expect(snapshots.at(-1)?.progress).toBeCloseTo(0.95, 8);
+
+    await advance(200);
+
+    expect(snapshots.at(-1)).toMatchObject({
+      state: "completed",
+      progress: 1,
+      positionBeat: 2,
+    });
+  });
+
+  it("restarts from the beginning after completing playback", async () => {
+    const { engine, snapshots } = createEngine();
+    engine.setTempo(60);
+    engine.play();
+    await advance(2100);
+    expect(snapshots.at(-1)?.state).toBe("completed");
+
+    engine.play();
+    expect(snapshots.at(-1)?.state).toBe("playing");
+    expect(snapshots.at(-1)?.progress).toBe(0);
   });
 
   it("restarts the selected range and increments loop count", async () => {

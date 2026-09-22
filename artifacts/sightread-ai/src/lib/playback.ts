@@ -1,4 +1,9 @@
-export type PlaybackState = "stopped" | "playing" | "paused" | "counting-in";
+export type PlaybackState =
+  | "stopped"
+  | "playing"
+  | "paused"
+  | "counting-in"
+  | "completed";
 export type CountInBars = 0 | 1 | 2;
 
 export interface PlaybackNote {
@@ -579,6 +584,15 @@ export class MusicalPlaybackEngine {
     this.positionBeat += deltaBeats;
     this.schedulePlaybackMetronome(rangeEndBeat);
 
+    const playbackPosition = Math.min(this.positionBeat, rangeEndBeat);
+    while (this.nextNoteIndex < this.score.notes.length) {
+      const note = this.score.notes[this.nextNoteIndex];
+      if (note.startBeat >= rangeEndBeat) break;
+      if (note.startBeat > playbackPosition) break;
+      if (note.startBeat >= this.rangeStartBeat()) this.playNote(note);
+      this.nextNoteIndex += 1;
+    }
+
     if (this.positionBeat >= rangeEndBeat) {
       if (this.loop) {
         this.positionBeat = this.rangeStartBeat();
@@ -590,19 +604,11 @@ export class MusicalPlaybackEngine {
         this.positionBeat = rangeEndBeat;
         this.clearTimer();
         this.stopVoices();
-        this.state = "stopped";
+        this.state = "completed";
         this.awaitingCountIn = true;
         this.report();
         return;
       }
-    }
-
-    while (this.nextNoteIndex < this.score.notes.length) {
-      const note = this.score.notes[this.nextNoteIndex];
-      if (note.startBeat >= rangeEndBeat) break;
-      if (note.startBeat > this.positionBeat) break;
-      if (note.startBeat >= this.rangeStartBeat()) this.playNote(note);
-      this.nextNoteIndex += 1;
     }
     this.report();
   }

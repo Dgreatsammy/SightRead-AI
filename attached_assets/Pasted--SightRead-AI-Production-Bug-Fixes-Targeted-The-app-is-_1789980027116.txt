@@ -1,0 +1,105 @@
+## SightRead AI — Production Bug Fixes (Targeted)
+
+The app is now publicly published at:
+
+https://sight-read-ai--dgreatsammy.replit.app/reader
+
+Real user testing found these issues:
+
+### 1. PDF import fails
+
+Error:
+
+`spawnSync unzip ENOENT`
+
+Cause: the deployed environment cannot find the external `unzip` executable.
+
+Fix this in a deployment-portable way. Prefer a JavaScript ZIP/MXL extraction library that works in the existing Node.js server rather than relying on an OS-level `unzip` command.
+
+Requirements:
+
+* Keep Audiveris.
+* Keep the current unified Express server.
+* Preserve the existing MusicXML extraction behavior.
+* Handle missing or malformed MXL files with a clear error.
+* Do not hardcode a machine-specific executable path.
+
+### 2. JPG/PNG import does not produce MusicXML
+
+Error:
+
+`Audiveris completed but did not produce MusicXML.`
+
+Investigate the actual production failure with a valid sheet-music image.
+
+Check:
+
+* Audiveris exit code and stderr.
+* Output directory contents.
+* Whether Audiveris produces `.mxl`, `.xml`, or another output format.
+* Whether the deployed process has the required native libraries and permissions.
+* Whether the output file is being removed or read incorrectly.
+
+Make the smallest fix that addresses the actual cause.
+
+Do not claim JPG/PNG import works unless a real valid sheet-music image successfully produces valid MusicXML.
+
+### 3. Playback sometimes stops halfway
+
+Reproduce the issue using an imported MusicXML sample.
+
+Inspect:
+
+* Note parsing and measure boundaries.
+* Playback scheduling.
+* End-of-score detection.
+* Selected part and multi-part playback.
+* Loop count and playback state transitions.
+* Whether the final note or final measure is scheduled correctly.
+
+Fix only the confirmed cause. Do not rewrite the playback engine without evidence.
+
+Add a regression test for the specific failure.
+
+### 4. Playback completion state
+
+Add a clear user-facing completion state.
+
+When playback reaches the end of the selected score or loop:
+
+* Stop scheduling additional notes.
+* Set playback state to completed/finished.
+* Reset or preserve the play button appropriately.
+* Display a clear message such as `Practice complete` or `Score finished`.
+* Ensure restarting playback works correctly.
+
+Do not add a complex buffering system unless testing proves that buffering is necessary. First distinguish between a playback scheduling bug and a UI progress-display issue.
+
+### Execution constraints
+
+* Work only on these three issues.
+* Do not add authentication, payments, databases, dashboards, or unrelated features.
+* Do not spend extended time investigating without making progress.
+* Make one focused change at a time and run a relevant test.
+* Preserve existing functionality.
+* Do not repeatedly run full builds when a focused test is sufficient.
+
+### Required verification
+
+Run:
+
+* Relevant regression tests
+* Frontend typecheck
+* API typecheck
+* Frontend build
+* API build
+
+Then report concisely:
+
+1. Files changed
+2. Root cause of each issue
+3. Tests passed
+4. Which production behavior was verified
+5. Any remaining blocker
+
+Do not claim the JPG/PNG or PDF workflow is fixed without testing the actual file type.

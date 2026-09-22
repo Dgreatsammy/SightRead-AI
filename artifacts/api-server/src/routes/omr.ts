@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
+import sharp from "sharp";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -37,8 +38,26 @@ router.post("/omr", upload.single("file"), async (req, res) => {
   const outputDir = await fs.mkdtemp(
     path.join(os.tmpdir(), "sightread-omr-output-"),
   );
+  const temporaryInputPaths = new Set([req.file.path]);
 
   try {
+    const originalExtension = path.extname(req.file.originalname).toLowerCase();
+    let inputPath = req.file.path;
+
+    if (originalExtension) {
+      const namedInputPath = `${req.file.path}${originalExtension}`;
+      await fs.rename(req.file.path, namedInputPath);
+      temporaryInputPaths.add(namedInputPath);
+      inputPath = namedInputPath;
+    }
+
+    if (/\.(png|jpe?g)$/i.test(originalExtension)) {
+      const upscaledInputPath = path.join(outputDir, "upscaled-input.png");
+      await prepareRasterInput(inputPath, upscaledInputPath);
+      temporaryInputPaths.add(upscaledInputPath);
+      inputPath = upscaledInputPath;
+    }
+
     const jarFiles = await collectJarFiles(AUDIVERIS_APP);
 
     if (jarFiles.length === 0) {
@@ -62,7 +81,7 @@ router.post("/omr", upload.single("file"), async (req, res) => {
           "-export",
           "-output",
           outputDir,
-          req.file.path,
+          inputPath,
         ],
         {
           maxBuffer: 10 * 1024 * 1024,
@@ -99,7 +118,8 @@ router.post("/omr", upload.single("file"), async (req, res) => {
       );
 
     if (!musicXmlFile) {
-      const outputSummary = files.length > 0 ? ` Output files: ${files.join(", ")}.` : "";
+      const outputSummary =
+        files.length > 0 ? ` Output files: ${files.join(", ")}.` : "";
       throw new Error(
         `Audiveris completed but did not produce MusicXML.${outputSummary}`,
       );
@@ -123,7 +143,11 @@ router.post("/omr", upload.single("file"), async (req, res) => {
       error: message,
     });
   } finally {
-    await fs.rm(req.file.path, { force: true }).catch(() => {});
+    await Promise.all(
+      [...temporaryInputPaths].map((inputPath) =>
+        fs.rm(inputPath, { force: true }).catch(() => {}),
+      ),
+    );
     await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
   }
 });
@@ -168,14 +192,67 @@ function formatAudiverisFailure(error: unknown) {
     return "Audiveris failed while processing the score.";
   }
 
-  const details = error as { message?: unknown; stderr?: unknown };
+  const details = error as {
+    code?: unknown;
+    message?: unknown;
+    signal?: unknown;
+    stderr?: unknown;
+    stdout?: unknown;
+  };
   const message =
     typeof details.message === "string"
       ? details.message
       : "Audiveris failed while processing the score.";
+  const status =
+    typeof details.code === "number"
+      ? ` Exit code: ${details.code}.`
+      : typeof details.signal === "string"
+        ? ` Signal: ${details.signal}.`
+        : "";
   const stderr =
     typeof details.stderr === "string" ? details.stderr.trim() : "";
-  return stderr ? `${message} ${stderr}` : message;
+  const stdout =
+    typeof details.stdout === "string" ? details.stdout.trim() : "";
+  const output = [stderr, stdout].filter(Boolean).join("\n").trim();
+  const diagnostic = output ? ` Audiveris output:\n${output.slice(-5000)}` : "";
+  return `${message}.${status}${diagnostic}`;
+}
+
+async function prepareRasterInput(
+  inputPath: string,
+  outputPath: string,
+): Promise<void> {
+  const image = sharp(inputPath);
+  const metadata = await image.metadata();
+  const width = metadata.width;
+  const height = metadata.height;
+
+  if (!width || !height) {
+    throw new Error("The uploaded raster score has no readable dimensions.");
+  }
+
+  const sourceDensity = metadata.density ?? 0;
+  const densityScale =
+    sourceDensity > 0 ? Math.min(3, 300 / sourceDensity) : 1;
+  const dimensionScale =
+    Math.max(width, height) < 2200
+      ? Math.min(3, 2200 / Math.max(width, height))
+      : 1;
+  const scale = Math.max(densityScale, dimensionScale);
+
+  if (scale <= 1.05) {
+    await fs.copyFile(inputPath, outputPath);
+    return;
+  }
+
+  await image
+    .resize({
+      width: Math.round(width * scale),
+      height: Math.round(height * scale),
+    })
+    .png()
+    .withMetadata({ density: 300 })
+    .toFile(outputPath);
 }
 
 export default router;

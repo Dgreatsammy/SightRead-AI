@@ -29,128 +29,140 @@ const audiverisRuntime = path.join(audiverisRoot, "lib/runtime");
 const AUDIVERIS_JAVA = path.join(audiverisRuntime, "bin/java");
 const AUDIVERIS_APP = path.join(audiverisRoot, "lib/app");
 
-router.post("/omr", upload.single("file"), async (req, res) => {
-  if (!req.file) {
-    res.status(400).json({ error: "No score image was uploaded." });
-    return;
-  }
-
-  const outputDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "sightread-omr-output-"),
-  );
-  const temporaryInputPaths = new Set([req.file.path]);
-
-  try {
-    const originalExtension = path.extname(req.file.originalname).toLowerCase();
-    let inputPath = req.file.path;
-
-    if (originalExtension) {
-      const namedInputPath = `${req.file.path}${originalExtension}`;
-      await fs.rename(req.file.path, namedInputPath);
-      temporaryInputPaths.add(namedInputPath);
-      inputPath = namedInputPath;
+router.post(
+  "/omr",
+  (req, _res, next) => {
+    console.log(
+      "[OMR] request reached upload middleware:",
+      req.method,
+      req.path,
+    );
+    next();
+  },
+  upload.single("file"),
+  async (req, res) => {
+    console.log("[OMR] upload middleware completed:", req.file?.originalname);
+    if (!req.file) {
+      res.status(400).json({ error: "No score image was uploaded." });
+      return;
     }
 
-    if (/\.(png|jpe?g)$/i.test(originalExtension)) {
-      const upscaledInputPath = path.join(outputDir, "upscaled-input.png");
-      await prepareRasterInput(inputPath, upscaledInputPath);
-      temporaryInputPaths.add(upscaledInputPath);
-      inputPath = upscaledInputPath;
-    }
-
-    const jarFiles = await collectJarFiles(AUDIVERIS_APP);
-
-    if (jarFiles.length === 0) {
-      throw new Error("Audiveris application JARs were not found.");
-    }
-
-    const classpath = jarFiles.join(path.delimiter);
+    const outputDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "sightread-omr-output-"),
+    );
+    const temporaryInputPaths = new Set([req.file.path]);
 
     try {
-      await execFileAsync(
-        AUDIVERIS_JAVA,
-        [
-          "-Djava.awt.headless=true",
-          "-Dsun.java2d.uiScale=1",
-          "--enable-native-access=ALL-UNNAMED",
-          "-cp",
-          classpath,
-          "org.audiveris.omr.Main",
-          "-batch",
-          "-transcribe",
-          "-export",
-          "-output",
-          outputDir,
-          inputPath,
-        ],
-        {
-          maxBuffer: 10 * 1024 * 1024,
-          env: {
-            ...process.env,
-            JAVA_HOME: audiverisRuntime,
-            LD_LIBRARY_PATH: [
-              path.join(audiverisRuntime, "lib"),
-              process.env["LD_LIBRARY_PATH"],
-              process.env["NIX_LD_LIBRARY_PATH"],
-            ]
-              .filter(Boolean)
-              .join(path.delimiter),
-            PATH: [
-              path.join(audiverisRuntime, "bin"),
-              process.env["PATH"],
-            ]
-              .filter(Boolean)
-              .join(path.delimiter),
+      const originalExtension = path
+        .extname(req.file.originalname)
+        .toLowerCase();
+      let inputPath = req.file.path;
+
+      if (originalExtension) {
+        const namedInputPath = `${req.file.path}${originalExtension}`;
+        await fs.rename(req.file.path, namedInputPath);
+        temporaryInputPaths.add(namedInputPath);
+        inputPath = namedInputPath;
+      }
+
+      if (/\.(png|jpe?g)$/i.test(originalExtension)) {
+        const upscaledInputPath = path.join(outputDir, "upscaled-input.png");
+        await prepareRasterInput(inputPath, upscaledInputPath);
+        temporaryInputPaths.add(upscaledInputPath);
+        inputPath = upscaledInputPath;
+      }
+
+      const jarFiles = await collectJarFiles(AUDIVERIS_APP);
+
+      if (jarFiles.length === 0) {
+        throw new Error("Audiveris application JARs were not found.");
+      }
+
+      const classpath = jarFiles.join(path.delimiter);
+
+      try {
+        await execFileAsync(
+          AUDIVERIS_JAVA,
+          [
+            "-Djava.awt.headless=true",
+            "-Dsun.java2d.uiScale=1",
+            "--enable-native-access=ALL-UNNAMED",
+            "-cp",
+            classpath,
+            "org.audiveris.omr.Main",
+            "-batch",
+            "-transcribe",
+            "-export",
+            "-output",
+            outputDir,
+            inputPath,
+          ],
+          {
+            maxBuffer: 10 * 1024 * 1024,
+            env: {
+              ...process.env,
+              JAVA_HOME: audiverisRuntime,
+              LD_LIBRARY_PATH: [
+                path.join(audiverisRuntime, "lib"),
+                process.env["LD_LIBRARY_PATH"],
+                process.env["NIX_LD_LIBRARY_PATH"],
+              ]
+                .filter(Boolean)
+                .join(path.delimiter),
+              PATH: [path.join(audiverisRuntime, "bin"), process.env["PATH"]]
+                .filter(Boolean)
+                .join(path.delimiter),
+            },
           },
-        },
-      );
+        );
+      } catch (error) {
+        throw new Error(formatAudiverisFailure(error));
+      }
+
+      const files = await listFilesRecursive(outputDir);
+      const musicXmlFile =
+        files.find((file) => /\.mxl$/i.test(file)) ??
+        files.find(
+          (file) =>
+            /\.(musicxml|xml)$/i.test(file) &&
+            !/META-INF[/\\]container\.xml$/i.test(file),
+        );
+
+      if (!musicXmlFile) {
+        const outputSummary =
+          files.length > 0 ? ` Output files: ${files.join(", ")}.` : "";
+        throw new Error(
+          `Audiveris completed but did not produce MusicXML.${outputSummary}`,
+        );
+      }
+
+      const mxlPath = path.join(outputDir, musicXmlFile);
+      const xml = /\.mxl$/i.test(musicXmlFile)
+        ? await extractMusicXmlFromMxl(mxlPath)
+        : await fs.readFile(mxlPath, "utf8");
+
+      res.json({
+        success: true,
+        musicXml: xml,
+        source: "audiveris",
+      });
     } catch (error) {
-      throw new Error(formatAudiverisFailure(error));
-    }
+      const message =
+        error instanceof Error ? error.message : "OMR processing failed.";
 
-    const files = await listFilesRecursive(outputDir);
-    const musicXmlFile =
-      files.find((file) => /\.mxl$/i.test(file)) ??
-      files.find(
-        (file) =>
-          /\.(musicxml|xml)$/i.test(file) &&
-          !/META-INF[/\\]container\.xml$/i.test(file),
+      res.status(500).json({
+        error: message,
+      });
+    } finally {
+      await Promise.all(
+        [...temporaryInputPaths].map((inputPath) =>
+          fs.rm(inputPath, { force: true }).catch(() => {}),
+        ),
       );
-
-    if (!musicXmlFile) {
-      const outputSummary =
-        files.length > 0 ? ` Output files: ${files.join(", ")}.` : "";
-      throw new Error(
-        `Audiveris completed but did not produce MusicXML.${outputSummary}`,
-      );
+      await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
     }
-
-    const mxlPath = path.join(outputDir, musicXmlFile);
-    const xml = /\.mxl$/i.test(musicXmlFile)
-      ? await extractMusicXmlFromMxl(mxlPath)
-      : await fs.readFile(mxlPath, "utf8");
-
-    res.json({
-      success: true,
-      musicXml: xml,
-      source: "audiveris",
-    });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "OMR processing failed.";
-
-    res.status(500).json({
-      error: message,
-    });
-  } finally {
-    await Promise.all(
-      [...temporaryInputPaths].map((inputPath) =>
-        fs.rm(inputPath, { force: true }).catch(() => {}),
-      ),
-    );
-    await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
-  }
-});
+  },
+);
 
 async function collectJarFiles(directory: string): Promise<string[]> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -169,7 +181,10 @@ async function collectJarFiles(directory: string): Promise<string[]> {
   return jars;
 }
 
-async function listFilesRecursive(directory: string, relativeDirectory = ""): Promise<string[]> {
+async function listFilesRecursive(
+  directory: string,
+  relativeDirectory = "",
+): Promise<string[]> {
   const entries = await fs.readdir(path.join(directory, relativeDirectory), {
     withFileTypes: true,
   });
@@ -232,8 +247,7 @@ async function prepareRasterInput(
   }
 
   const sourceDensity = metadata.density ?? 0;
-  const densityScale =
-    sourceDensity > 0 ? Math.min(3, 300 / sourceDensity) : 1;
+  const densityScale = sourceDensity > 0 ? Math.min(3, 300 / sourceDensity) : 1;
   const dimensionScale =
     Math.max(width, height) < 2200
       ? Math.min(3, 2200 / Math.max(width, height))

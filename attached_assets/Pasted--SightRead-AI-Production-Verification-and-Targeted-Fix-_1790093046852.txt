@@ -1,0 +1,90 @@
+## SightRead AI — Production Verification and Targeted Fix
+
+The public application is live at:
+
+https://sight-read-ai--dgreatsammy.replit.app/reader
+
+Real user testing produced these results:
+
+* MusicXML files open.
+* A PDF conversion displayed an apparently different score with the title `Untitled Score`.
+* JPG upload on the public website returns `Failed to fetch`.
+* Your previous local API tests reported HTTP 200 for both JPG and PDF.
+
+Your local tests are not sufficient. The public deployment must be verified separately.
+
+### Priority 1 — Fix the public JPG upload
+
+Investigate only the production request path:
+
+Browser → public `/api/omr` → Express → Audiveris → MusicXML.
+
+Determine why the public JPG request returns `Failed to fetch`.
+
+Check:
+
+1. Whether the published deployment contains the latest API code.
+2. Whether the public `/api/omr` route reaches the unified Express server.
+3. Whether the API process crashes, times out, or returns an error.
+4. Whether the browser receives a valid HTTP response.
+5. Whether the deployment has the required Audiveris runtime and native libraries.
+
+Use server logs and a real JPG score test. Do not claim success based only on localhost tests.
+
+Make the smallest practical fix. Do not redesign the application.
+
+### Priority 2 — Verify the PDF output
+
+The original PDF is a two-part vocal score of `God Rest Ye Merry, Gentlemen`.
+
+The app displayed:
+
+* `Untitled Score`
+* A score labelled `Voice`
+* 20 measures
+* No visible lyrics
+
+Determine whether this output came from the uploaded PDF or another previously imported score.
+
+If it came from the PDF:
+
+1. Save and inspect the exact MusicXML returned by Audiveris.
+2. Check the number of parts and measures.
+3. Check whether lyrics and part names are present.
+4. Check whether the title metadata is missing or discarded.
+5. Do not claim the OMR is musically accurate merely because the XML parses.
+
+Do not attempt a full OMR accuracy overhaul now. Report the actual findings.
+
+### Priority 3 — Fix the score title
+
+Replace the generic `Untitled Score` fallback with this order:
+
+1. MusicXML work title, if present.
+2. MusicXML movement title, if present.
+3. Uploaded filename without its extension.
+4. `Imported score` as the final fallback.
+
+Preserve existing MusicXML and playback functionality.
+
+### Verification requirements
+
+Run focused tests only:
+
+* Public `/reader` check.
+* Public `/api/healthz` check.
+* Public JPG upload test.
+* Public PDF upload test.
+* MusicXML title fallback test.
+
+Do not repeatedly run the entire build without a change.
+
+Final response must state:
+
+1. Whether the public JPG request succeeded.
+2. The actual cause of `Failed to fetch`.
+3. Whether the PDF output was verified against the uploaded PDF.
+4. Whether the title fallback was fixed.
+5. Any single remaining blocker.
+
+Do not claim that local HTTP 200 proves the public deployment works.

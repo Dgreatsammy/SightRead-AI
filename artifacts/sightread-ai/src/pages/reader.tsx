@@ -128,6 +128,7 @@ function PlaybackIcon({ state }: { state: PlaybackState }) {
 
 export default function Reader() {
   const scoreRef = useRef<HTMLDivElement>(null);
+  const renderRequestRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const engineRef = useRef<MusicalPlaybackEngine | null>(null);
   const rangeRef = useRef({
@@ -279,7 +280,10 @@ export default function Reader() {
   }, [loopStart, loopEnd]);
 
   const renderScore = useCallback(async (source: string) => {
+    const requestId = ++renderRequestRef.current;
+
     if (!scoreRef.current) return;
+
     engineRef.current?.stop();
     setScoreStatus("loading");
     setErrorText("");
@@ -313,9 +317,14 @@ export default function Reader() {
         followCursor: true,
       });
       await osmd.load(source);
+
+      if (requestId !== renderRequestRef.current) return;
+
       osmd.render();
       setScoreStatus("ready");
     } catch (error) {
+      if (requestId !== renderRequestRef.current) return;
+
       setScoreStatus("error");
       setScore(null);
       setErrorText(
@@ -455,9 +464,9 @@ export default function Reader() {
         ? "Playing"
         : playback === "paused"
           ? "Paused"
-        : playback === "completed"
-          ? "Practice complete"
-          : "Ready";
+          : playback === "completed"
+            ? "Practice complete"
+            : "Ready";
 
   return (
     <main className="paper-grain min-h-[100dvh] bg-[#e9e3d8] text-[#21354a]">

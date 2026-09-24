@@ -42,20 +42,26 @@ router.post(
   upload.single("file"),
   async (req, res) => {
     console.log("[OMR] upload middleware completed:", req.file?.originalname);
+
     if (!req.file) {
-      res.status(400).json({ error: "No score image was uploaded." });
+      res.status(400).json({
+        success: false,
+        error: "No score image was uploaded.",
+      });
       return;
     }
 
     const outputDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "sightread-omr-output-"),
     );
+
     const temporaryInputPaths = new Set([req.file.path]);
 
     try {
       const originalExtension = path
         .extname(req.file.originalname)
         .toLowerCase();
+
       let inputPath = req.file.path;
 
       if (originalExtension) {
@@ -65,9 +71,18 @@ router.post(
         inputPath = namedInputPath;
       }
 
+      /*
+       * Raster-image quality gate.
+       *
+       * Do not silently enlarge a genuinely small image and present the
+       * resulting OMR as trustworthy. Interpolation cannot recreate missing
+       * note/staff detail.
+       */
       if (/\.(png|jpe?g)$/i.test(originalExtension)) {
         const upscaledInputPath = path.join(outputDir, "upscaled-input.png");
+
         await prepareRasterInput(inputPath, upscaledInputPath);
+
         temporaryInputPaths.add(upscaledInputPath);
         inputPath = upscaledInputPath;
       }
@@ -120,6 +135,7 @@ router.post(
       }
 
       const files = await listFilesRecursive(outputDir);
+
       const musicXmlFile =
         files.find((file) => /\.mxl$/i.test(file)) ??
         files.find(
@@ -131,26 +147,58 @@ router.post(
       if (!musicXmlFile) {
         const outputSummary =
           files.length > 0 ? ` Output files: ${files.join(", ")}.` : "";
+
         throw new Error(
           `Audiveris completed but did not produce MusicXML.${outputSummary}`,
         );
       }
 
       const mxlPath = path.join(outputDir, musicXmlFile);
+
       const xml = /\.mxl$/i.test(musicXmlFile)
         ? await extractMusicXmlFromMxl(mxlPath)
         : await fs.readFile(mxlPath, "utf8");
 
+      /*
+       * Basic MusicXML sanity check.
+       *
+       * This confirms that Audiveris returned a usable score structure.
+       * It intentionally does NOT claim that OMR is musically identical
+       * to the uploaded source.
+       */
+      if (!/<score-partwise\b/i.test(xml)) {
+        throw new Error(
+          "Audiveris produced MusicXML, but the result was not a valid partwise score.",
+        );
+      }
+
+      if (!/<part\b/i.test(xml) || !/<measure\b/i.test(xml)) {
+        throw new Error(
+          "Audiveris produced an incomplete MusicXML score. Please upload a clearer scan.",
+        );
+      }
+
+      /*
+       * OMR is reconstruction, not a guaranteed transcription.
+       *
+       * The frontend can use these fields to require the user to verify
+       * the reconstructed notation before practicing it.
+       */
       res.json({
         success: true,
         musicXml: xml,
         source: "audiveris",
+        requiresVerification: true,
+        warning:
+          "This score was reconstructed from an image/PDF using optical music recognition. " +
+          "Please compare the displayed notation with the original score before practicing.",
       });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "OMR processing failed.";
 
-      res.status(500).json({
+      res.status(422).json({
+        success: false,
         error: message,
       });
     } finally {
@@ -159,6 +207,7 @@ router.post(
           fs.rm(inputPath, { force: true }).catch(() => {}),
         ),
       );
+
       await fs.rm(outputDir, { recursive: true, force: true }).catch(() => {});
     }
   },
@@ -188,10 +237,12 @@ async function listFilesRecursive(
   const entries = await fs.readdir(path.join(directory, relativeDirectory), {
     withFileTypes: true,
   });
+
   const files: string[] = [];
 
   for (const entry of entries) {
     const relativePath = path.join(relativeDirectory, entry.name);
+
     if (entry.isDirectory()) {
       files.push(...(await listFilesRecursive(directory, relativePath)));
     } else if (entry.isFile()) {
@@ -214,22 +265,29 @@ function formatAudiverisFailure(error: unknown) {
     stderr?: unknown;
     stdout?: unknown;
   };
+
   const message =
     typeof details.message === "string"
       ? details.message
       : "Audiveris failed while processing the score.";
+
   const status =
     typeof details.code === "number"
       ? ` Exit code: ${details.code}.`
       : typeof details.signal === "string"
         ? ` Signal: ${details.signal}.`
         : "";
+
   const stderr =
     typeof details.stderr === "string" ? details.stderr.trim() : "";
+
   const stdout =
     typeof details.stdout === "string" ? details.stdout.trim() : "";
+
   const output = [stderr, stdout].filter(Boolean).join("\n").trim();
+
   const diagnostic = output ? ` Audiveris output:\n${output.slice(-5000)}` : "";
+
   return `${message}.${status}${diagnostic}`;
 }
 
@@ -239,6 +297,7 @@ async function prepareRasterInput(
 ): Promise<void> {
   const image = sharp(inputPath);
   const metadata = await image.metadata();
+
   const width = metadata.width;
   const height = metadata.height;
 
@@ -246,13 +305,29 @@ async function prepareRasterInput(
     throw new Error("The uploaded raster score has no readable dimensions.");
   }
 
+  const maxDimension = Math.max(width, height);
+  const minDimension = Math.min(width, height);
   const sourceDensity = metadata.density ?? 0;
-  const densityScale =
-    sourceDensity > 0 ? Math.min(3, 300 / sourceDensity) : 1;
+
+  /*
+   * Do not manufacture detail by silently upscaling a genuinely small image.
+   */
+  const MIN_MAX_DIMENSION = 1600;
+  const MIN_MIN_DIMENSION = 1000;
+
+  if (maxDimension < MIN_MAX_DIMENSION || minDimension < MIN_MIN_DIMENSION) {
+    throw new Error(
+      `This score image is too low-resolution for reliable note recognition ` +
+        `(${width}×${height}px). Please upload a clearer image or a PDF/scan ` +
+        `with at least about ${MIN_MAX_DIMENSION}×${MIN_MIN_DIMENSION}px.`,
+    );
+  }
+
+  const densityScale = sourceDensity > 0 ? Math.min(3, 300 / sourceDensity) : 1;
+
   const dimensionScale =
-    Math.max(width, height) < 2200
-      ? Math.min(3, 2200 / Math.max(width, height))
-      : 1;
+    maxDimension < 2200 ? Math.min(3, 2200 / maxDimension) : 1;
+
   const scale = Math.max(densityScale, dimensionScale);
 
   let pipeline = image
@@ -270,10 +345,7 @@ async function prepareRasterInput(
     });
   }
 
-  await pipeline
-    .png()
-    .withMetadata({ density: 300 })
-    .toFile(outputPath);
+  await pipeline.png().withMetadata({ density: 300 }).toFile(outputPath);
 }
 
 export default router;

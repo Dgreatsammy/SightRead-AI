@@ -410,8 +410,34 @@ export default function Reader() {
         success?: boolean;
         musicXml?: string;
         error?: string;
+        requiresVerification?: boolean;
+        warning?: string;
       };
 
+      if (!response.ok || !data.success || !data.musicXml) {
+        throw new Error(
+          data.error || "The score could not be converted to MusicXML.",
+        );
+      }
+
+      if (!isMusicXml(data.musicXml)) {
+        throw new Error(
+          "Audiveris returned invalid MusicXML. Please try another score.",
+        );
+      }
+
+      const importedTitle =
+        file.name.replace(/\.(png|jpe?g|pdf)$/i, "") || "Imported score";
+
+      setScoreTitle(importedTitle);
+
+      if (data.requiresVerification && data.warning) {
+        setErrorText(data.warning);
+      }
+
+      setXml(data.musicXml);
+      setCurrentMeasure(1);
+      setProgress(0);
       if (!response.ok || !data.success || !data.musicXml) {
         throw new Error(
           data.error || "The score could not be converted to MusicXML.",

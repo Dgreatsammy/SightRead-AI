@@ -247,23 +247,30 @@ async function prepareRasterInput(
   }
 
   const sourceDensity = metadata.density ?? 0;
-  const densityScale = sourceDensity > 0 ? Math.min(3, 300 / sourceDensity) : 1;
+  const densityScale =
+    sourceDensity > 0 ? Math.min(3, 300 / sourceDensity) : 1;
   const dimensionScale =
     Math.max(width, height) < 2200
       ? Math.min(3, 2200 / Math.max(width, height))
       : 1;
   const scale = Math.max(densityScale, dimensionScale);
 
-  if (scale <= 1.05) {
-    await fs.copyFile(inputPath, outputPath);
-    return;
-  }
+  let pipeline = image
+    .rotate()
+    .flatten({ background: "#ffffff" })
+    .grayscale()
+    .normalize()
+    .sharpen({ sigma: 1 });
 
-  await image
-    .resize({
+  if (scale > 1.05) {
+    pipeline = pipeline.resize({
       width: Math.round(width * scale),
       height: Math.round(height * scale),
-    })
+      kernel: sharp.kernel.lanczos3,
+    });
+  }
+
+  await pipeline
     .png()
     .withMetadata({ density: 300 })
     .toFile(outputPath);

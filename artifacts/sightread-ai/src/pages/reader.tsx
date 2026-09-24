@@ -299,7 +299,6 @@ export default function Reader() {
         Math.max(nextStart, rangeRef.current.end),
       );
       setScore(parsed);
-      setScoreTitle(parsed.title);
       setLoopStart(nextStart);
       setLoopEnd(nextEnd);
       setCurrentMeasure(nextStart);

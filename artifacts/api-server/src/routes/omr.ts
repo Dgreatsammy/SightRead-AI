@@ -28,6 +28,19 @@ const audiverisRoot =
 const audiverisRuntime = path.join(audiverisRoot, "lib/runtime");
 const AUDIVERIS_JAVA = path.join(audiverisRuntime, "bin/java");
 const AUDIVERIS_APP = path.join(audiverisRoot, "lib/app");
+// Audiveris uses Tesseract OCR to read lyrics, titles, and dynamic markings.
+// Without trained language data it silently skips text recognition and
+// misreads lyric syllables as musical symbols (stray dynamics, trills,
+// octave-shift marks). See tools/audiveris/tessdata/README.md for setup.
+const AUDIVERIS_TESSDATA_PREFIX =
+  process.env["AUDIVERIS_TESSDATA_PREFIX"] ||
+  path.join(projectRoot, "tools/audiveris/tessdata");
+// Modern JVMs (Java 10+) auto-detect a container's cgroup memory limit and
+// size the default heap accordingly, so this is normally unset. It exists as
+// a manual override for tuning against real numbers from a host's metrics
+// (e.g. Railway's dashboard) if the default sizing ever proves too
+// aggressive or too conservative for this workload. Example: "1536m".
+const AUDIVERIS_JAVA_MAX_HEAP = process.env["AUDIVERIS_JAVA_MAX_HEAP"];
 
 router.post(
   "/omr",
@@ -87,6 +100,9 @@ router.post(
             "-Djava.awt.headless=true",
             "-Dsun.java2d.uiScale=1",
             "--enable-native-access=ALL-UNNAMED",
+            ...(AUDIVERIS_JAVA_MAX_HEAP
+              ? [`-Xmx${AUDIVERIS_JAVA_MAX_HEAP}`]
+              : []),
             "-cp",
             classpath,
             "org.audiveris.omr.Main",
@@ -112,6 +128,7 @@ router.post(
               PATH: [path.join(audiverisRuntime, "bin"), process.env["PATH"]]
                 .filter(Boolean)
                 .join(path.delimiter),
+              TESSDATA_PREFIX: AUDIVERIS_TESSDATA_PREFIX,
             },
           },
         );

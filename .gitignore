@@ -47,3 +47,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Tesseract OCR language data for Audiveris (downloaded via pnpm setup:ocr)
+tools/audiveris/tessdata/*.traineddata

@@ -290,14 +290,72 @@ describe("MusicXML parser", () => {
     ).toThrow(/duration/i);
   });
 
-  it("accepts multiple-part scores and exposes all parts", () => {
+  it("accepts multiple-part scores, exposes all parts, and adds an all-voices track", () => {
     const secondPart = `<part id="P2">${measure(1, note(), fourFour)}</part>`;
     const score = parseMusicXml(
       scoreXml(measure(1, note(), fourFour), secondPart),
     );
-    expect(score.parts).toHaveLength(2);
+    // Each original part, plus one "All voices — full score" combined track.
+    expect(score.parts).toHaveLength(3);
     expect(score.selectedPartId).toBe("P1");
-    expect(score.parts.map((part) => part.id)).toEqual(["P1", "P2"]);
+    expect(score.parts.map((part) => part.id)).toEqual([
+      "P1",
+      "P2",
+      "__all__",
+    ]);
+    const all = score.parts.find((part) => part.id === "__all__");
+    expect(all?.notes).toHaveLength(2);
+  });
+
+  it("does not split a part that only ever has one voice", () => {
+    const score = parseMusicXml(scoreXml(measure(1, note(), fourFour)));
+    // A single, unsplit part gets no SATB/voice tracks added.
+    expect(score.parts).toHaveLength(1);
+    expect(score.parts[0].id).toBe("P1");
+  });
+
+  it("splits a two-voice-per-staff part (e.g. soprano+alto sharing a staff)", () => {
+    const upperVoice = note({ step: "G", octave: 5 });
+    const lowerVoice = `<note><voice>2</voice><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>`;
+    const body = `${upperVoice}${lowerVoice}${note({ step: "G", octave: 5 })}${`<note><voice>2</voice><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>`}`;
+    const score = parseMusicXml(scoreXml(measure(1, body, fourFour)));
+
+    const names = score.parts.map((part) => part.displayName);
+    expect(names).toContain("Piano (together)");
+    expect(names.some((name) => name.includes("upper voice"))).toBe(true);
+    expect(names.some((name) => name.includes("lower voice"))).toBe(true);
+    expect(names).toContain("All voices — full score");
+
+    const upper = score.parts.find(
+      (part) => part.displayName === "Piano · upper voice",
+    );
+    expect(upper?.notes.every((n) => n.midi === 79)).toBe(true);
+  });
+
+  it("labels exactly four split voices as Soprano, Alto, Tenor, and Bass", () => {
+    const staffVoice = (pitchStep: string, octave: number, voice: number) =>
+      `<note><staff>1</staff><voice>${voice}</voice><pitch><step>${pitchStep}</step><octave>${octave}</octave></pitch><duration>1</duration><type>quarter</type></note>`;
+    const trebleBody = `${staffVoice("C", 5, 1)}${staffVoice("C", 4, 2)}${staffVoice(
+      "C",
+      5,
+      1,
+    )}${staffVoice("C", 4, 2)}`;
+    const bassBody = `${staffVoice("C", 3, 1)}${staffVoice("C", 2, 2)}${staffVoice(
+      "C",
+      3,
+      1,
+    )}${staffVoice("C", 2, 2)}`;
+    const secondPart = `<part id="P2">${measure(1, bassBody, fourFour)}</part>`;
+    const score = parseMusicXml(
+      scoreXml(measure(1, trebleBody, fourFour), secondPart),
+    );
+
+    const names = score.parts.map((part) => part.displayName);
+    expect(names).toContain("Soprano");
+    expect(names).toContain("Alto");
+    expect(names).toContain("Tenor");
+    expect(names).toContain("Bass");
+    expect(names).toContain("All voices — full score");
   });
 });
 

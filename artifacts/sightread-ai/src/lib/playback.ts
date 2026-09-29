@@ -12,6 +12,8 @@ export interface PlaybackNote {
   midi: number | null;
   measureIndex: number;
   isRest: boolean;
+  /** "staff:voice" key from the MusicXML, used to isolate one voice in a part. */
+  voice?: string;
 }
 
 export interface PlaybackMeasure {
@@ -30,6 +32,8 @@ export interface PlaybackPart {
   measures: PlaybackMeasure[];
   beatsPerBar: number;
   beatUnitBeats: number;
+  /** "part" = as written, "voice" = one voice of a part, "all" = every part together. */
+  kind?: "part" | "voice" | "all";
 }
 
 export interface PlaybackScore {
@@ -173,6 +177,7 @@ function parsePart(
       duration: number;
       midi: number | null;
       isRest: boolean;
+      voice: string;
     }> = [];
 
     Array.from(measureElement.children).forEach((child) => {
@@ -213,13 +218,14 @@ function parsePart(
         return;
       }
 
+      const voiceKey = `${textOf(child, "staff") || "1"}:${textOf(child, "voice") || "1"}`;
       const midi = isRest ? null : pitchToMidi(child);
       if (!isRest && midi === null) {
         throw new Error(
           `The MusicXML part "${displayName}" contains a note without a valid pitch: ${child.outerHTML}`,
         );
       }
-      localNotes.push({ start, duration, midi, isRest });
+      localNotes.push({ start, duration, midi, isRest, voice: voiceKey });
       if (!isChord) {
         lastNoteStart = cursor;
         cursor += duration;
@@ -246,6 +252,7 @@ function parsePart(
         midi: note.midi,
         measureIndex,
         isRest: note.isRest,
+        voice: note.voice,
       });
     });
     absoluteMeasureStart += durationBeats;
@@ -261,7 +268,121 @@ function parsePart(
     measures,
     beatsPerBar: firstBeatsPerBar,
     beatUnitBeats: firstBeatUnitBeats,
+    kind: "part",
   };
+}
+
+const SATB_LABELS = ["Soprano", "Alto", "Tenor", "Bass"];
+
+function pitchedNotes(notes: PlaybackNote[]) {
+  return notes.filter((note) => note.midi !== null);
+}
+
+function meanPitch(notes: PlaybackNote[]) {
+  const pitched = pitchedNotes(notes);
+  if (pitched.length === 0) return 0;
+  return pitched.reduce((sum, note) => sum + (note.midi ?? 0), 0) / pitched.length;
+}
+
+/**
+ * Splits one MusicXML part into its individual voices (e.g. soprano and alto
+ * sharing a staff). Voices are returned highest-pitched first. Tiny fragments
+ * (typically OMR noise) are ignored. Returns [] when the part has fewer than
+ * two real voices, meaning there is nothing to split.
+ */
+function splitPartVoices(part: PlaybackPart): PlaybackPart[] {
+  const byVoice = new Map<string, PlaybackNote[]>();
+  part.notes.forEach((note) => {
+    const key = note.voice ?? "1:1";
+    const list = byVoice.get(key);
+    if (list) list.push(note);
+    else byVoice.set(key, [note]);
+  });
+
+  const counts = Array.from(byVoice.values()).map(
+    (notes) => pitchedNotes(notes).length,
+  );
+  const largest = Math.max(0, ...counts);
+  const threshold = Math.max(2, Math.ceil(largest * 0.25));
+  const significant = Array.from(byVoice.entries())
+    .filter(([, notes]) => pitchedNotes(notes).length >= threshold)
+    .sort((a, b) => meanPitch(b[1]) - meanPitch(a[1]));
+
+  if (significant.length < 2) return [];
+  return significant.map(([key, notes]) => ({
+    ...part,
+    id: `${part.id}::voice:${key}`,
+    name: part.name,
+    displayName: part.displayName,
+    notes,
+    kind: "voice" as const,
+  }));
+}
+
+function positionLabel(index: number, total: number) {
+  if (total === 2) return index === 0 ? "upper voice" : "lower voice";
+  if (total === 3) return ["upper voice", "middle voice", "lower voice"][index];
+  return `voice ${index + 1}`;
+}
+
+/**
+ * Turns the parts found in a score into the list a singer can choose from:
+ * each part as written, plus each individual voice inside multi-voice parts
+ * (labelled Soprano/Alto/Tenor/Bass when the score has exactly four lines),
+ * plus an "all voices" option.
+ */
+export function expandPracticeTracks(parts: PlaybackPart[]): PlaybackPart[] {
+  const split = parts.map((part) => splitPartVoices(part));
+  const leaves = parts.flatMap((part, index) =>
+    split[index].length > 0 ? split[index] : [part],
+  );
+
+  const satbByLeafId = new Map<string, string>();
+  if (leaves.length === 4) {
+    [...leaves]
+      .sort((a, b) => meanPitch(b.notes) - meanPitch(a.notes))
+      .forEach((leaf, rank) => satbByLeafId.set(leaf.id, SATB_LABELS[rank]));
+  }
+
+  const result: PlaybackPart[] = [];
+  parts.forEach((part, index) => {
+    const voices = split[index];
+    if (voices.length === 0) {
+      result.push(part);
+      return;
+    }
+    const labelled = voices.map((voice, voiceIndex) => ({
+      ...voice,
+      displayName:
+        satbByLeafId.get(voice.id) ??
+        `${part.displayName} · ${positionLabel(voiceIndex, voices.length)}`,
+    }));
+    const allLabel = satbByLeafId.size
+      ? labelled.map((voice) => voice.displayName).join(" + ")
+      : part.displayName;
+    result.push({
+      ...part,
+      displayName: `${allLabel} (together)`,
+    });
+    result.push(...labelled);
+  });
+
+  if (leaves.length >= 2) {
+    const longest = parts.reduce((best, part) =>
+      part.measures.length > best.measures.length ? part : best,
+    );
+    result.push({
+      ...longest,
+      id: "__all__",
+      name: "All voices",
+      displayName: "All voices — full score",
+      notes: parts
+        .flatMap((part) => part.notes)
+        .sort((left, right) => left.startBeat - right.startBeat),
+      kind: "all",
+    });
+  }
+  return result;
 }
 
 export function selectPlaybackPart(
@@ -329,10 +450,11 @@ export function parseMusicXml(source: string): PlaybackScore {
     const displayName = partName || `Part ${index + 1}`;
     return parsePart(part, partId, displayName);
   });
-  const firstPart = parsedParts[0];
+  const practiceTracks = expandPracticeTracks(parsedParts);
+  const firstPart = practiceTracks[0];
   return {
     title,
-    parts: parsedParts,
+    parts: practiceTracks,
     selectedPartId: firstPart.id,
     tempo: firstPart.tempo,
     notes: firstPart.notes,

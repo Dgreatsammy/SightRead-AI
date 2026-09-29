@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+.git
+.replit
+replit.md
+screenshots
+attached_assets
+*.log
+.env
+.env.*
+!.env.example
+tools/audiveris/tessdata/*.traineddata

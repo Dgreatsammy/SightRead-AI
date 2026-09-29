@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: sightread-ai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/healthz
+    # Render sets PORT itself; the app reads it via process.env.PORT (index.ts).
+    envVars:
+      - key: NODE_ENV
+        value: production

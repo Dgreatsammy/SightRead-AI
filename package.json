@@ -7,7 +7,8 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "deploy": "export PORT=${PORT:-5173} && BASE_PATH=/ pnpm --filter @workspace/sightread-ai run build && pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/api-server run start"
+    "deploy": "export PORT=${PORT:-5173} && pnpm run setup:ocr && BASE_PATH=/ pnpm --filter @workspace/sightread-ai run build && pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/api-server run start",
+    "setup:ocr": "bash scripts/setup-ocr.sh eng"
   },
   "private": true,
   "dependencies": {

@@ -142,6 +142,13 @@ export default function Reader() {
     "loading",
   );
   const [errorText, setErrorText] = useState("");
+  // OMR (scanned PDF/image) imports run Audiveris server-side and can
+  // legitimately take several minutes, especially on a memory-constrained
+  // host. Track this separately from a plain MusicXML file read (which
+  // resolves instantly) so the loading screen can set the right
+  // expectation instead of looking identical to a hang.
+  const [isOmrImport, setIsOmrImport] = useState(false);
+  const [omrElapsedSeconds, setOmrElapsedSeconds] = useState(0);
   const [tempo, setTempo] = useState(initialSettings.tempo);
   const [speed, setSpeed] = useState(initialSettings.speed);
   const [countInBars, setCountInBars] = useState<CountInBars>(0);
@@ -180,6 +187,18 @@ export default function Reader() {
     setCountInBeatsTotal(snapshot.countInBeatsTotal);
     setLoopCount(snapshot.loopCount);
   }, []);
+
+  useEffect(() => {
+    if (!isOmrImport || scoreStatus !== "loading") {
+      setOmrElapsedSeconds(0);
+      return;
+    }
+    const start = Date.now();
+    const interval = window.setInterval(() => {
+      setOmrElapsedSeconds(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [isOmrImport, scoreStatus]);
 
   useEffect(() => {
     const engine = new MusicalPlaybackEngine(handleProgress);
@@ -367,6 +386,7 @@ export default function Reader() {
     try {
       setScoreStatus("loading");
       setErrorText("");
+      setIsOmrImport(false);
 
       if (isXmlFile) {
         const content = await file.text();
@@ -398,6 +418,7 @@ export default function Reader() {
         return;
       }
 
+      setIsOmrImport(true);
       const formData = new FormData();
       formData.append("file", file);
 
@@ -551,9 +572,20 @@ export default function Reader() {
                     <span className="h-8 w-1.5 animate-pulse rounded-full bg-[#e2bc64] [animation-delay:120ms]" />
                     <span className="h-6 w-1.5 animate-pulse rounded-full bg-[#214e4b] [animation-delay:240ms]" />
                   </div>
-                  <p className="font-serif text-[21px]">Setting the page…</p>
-                  <p className="mt-2 text-[13px] text-[#7a817f]">
-                    Rendering your score for reading.
+                  <p className="font-serif text-[21px]">
+                    {isOmrImport ? "Reading your score…" : "Setting the page…"}
+                  </p>
+                  <p
+                    className="mt-2 max-w-[360px] text-center text-[13px] text-[#7a817f]"
+                    data-testid="status-score-detail"
+                  >
+                    {isOmrImport
+                      ? omrElapsedSeconds < 20
+                        ? "Converting your scanned page into notes."
+                        : omrElapsedSeconds < 90
+                          ? "Still working — this step can take a few minutes, especially for photos or larger pages."
+                          : `Still working (${Math.floor(omrElapsedSeconds / 60)}m ${String(omrElapsedSeconds % 60).padStart(2, "0")}s). Scanned scores can take several minutes on limited hardware — this is normal, not stuck.`
+                      : "Rendering your score for reading."}
                   </p>
                 </div>
               )}

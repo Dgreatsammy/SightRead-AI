@@ -28,20 +28,17 @@ RUN corepack enable
 
 WORKDIR /app
 
-# ---- Install dependencies (cached separately from source for faster rebuilds) ----
-FROM base AS deps
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
-COPY artifacts/api-server/package.json artifacts/api-server/package.json
-COPY artifacts/sightread-ai/package.json artifacts/sightread-ai/package.json
-COPY lib/api-client-react/package.json lib/api-client-react/package.json
-COPY lib/api-zod/package.json lib/api-zod/package.json
-COPY lib/db/package.json lib/db/package.json
-COPY scripts/package.json scripts/package.json
-RUN pnpm install --frozen-lockfile
-
 # ---- Build the app ----
-FROM deps AS build
+# A prior version of this stage copied each workspace package's package.json
+# in individually (for layer-cache reuse between dependency and source
+# changes), but that list silently drifted out of sync with the actual repo
+# (it's missed real workspace packages before) and broke the build with
+# ERR_PNPM_OUTDATED_LOCKFILE. Copying the whole repo before installing is
+# slightly less cache-efficient but cannot miss a workspace package: pnpm
+# always sees every importer the lockfile expects.
+FROM base AS build
 COPY . .
+RUN pnpm install --frozen-lockfile
 # The frontend build script reads PORT/BASE_PATH at build time even though
 # they don't affect a static build's runtime behavior; values here just need
 # to be valid, the real PORT is supplied by Railway/Render at container start.

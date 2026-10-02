@@ -160,3 +160,12 @@ overrides:
   esbuild: "0.28.2"
   # orval pins js-yaml to an exact version older than the CVE fix (>=4.3.2)
   js-yaml: '4.3.2'
+
+allowBuilds:
+  esbuild: true
+  # gl's native addon is only pulled in by artifacts/mockup-sandbox, which is
+  # never built or copied into the production image (see Dockerfile) — so
+  # skipping its native build script is safe and avoids a slow node-gyp
+  # compile in CI. Flip to true only if a package that's actually part of
+  # the production build/runtime ever needs gl.
+  gl: false

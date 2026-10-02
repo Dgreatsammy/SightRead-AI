@@ -51,3 +51,4 @@ Thumbs.db
 # Tesseract OCR language data for Audiveris (downloaded via pnpm setup:ocr)
 tools/audiveris/tessdata/*.traineddata
 *.patch
+*.patch

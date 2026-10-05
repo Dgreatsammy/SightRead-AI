@@ -335,6 +335,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@xmldom/xmldom':
+        specifier: ^0.9.12
+        version: 0.9.12
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7

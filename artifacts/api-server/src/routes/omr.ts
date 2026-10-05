@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { extractMusicXmlFromMxl } from "../lib/mxl.js";
+import { sanitizeAudiverisMusicXml } from "../lib/sanitizeAudiverisMusicXml.js";
 
 const router: IRouter = Router();
 
@@ -154,9 +155,16 @@ router.post(
       }
 
       const mxlPath = path.join(outputDir, musicXmlFile);
-      const xml = /\.mxl$/i.test(musicXmlFile)
+      const rawXml = /\.mxl$/i.test(musicXmlFile)
         ? await extractMusicXmlFromMxl(mxlPath)
         : await fs.readFile(mxlPath, "utf8");
+
+      // Repairs a specific, observed Audiveris misreading (a decorative
+      // range-indicator glyph read as a fake pickup measure, which both
+      // shifts every later barline and orphans the first lyric). See the
+      // function's own comment for the full explanation. No-ops on input
+      // that doesn't match that exact pattern.
+      const xml = sanitizeAudiverisMusicXml(rawXml);
 
       res.json({
         success: true,
@@ -264,8 +272,15 @@ async function prepareRasterInput(
   }
 
   const sourceDensity = metadata.density ?? 0;
+  // sharp reports 72 dpi for JPEG/PNG files that carry no density metadata.
+  // That sentinel says nothing about the scan, so treating it as a real
+  // reading makes Math.min(3, 300 / 72) saturate at 3 and, via the Math.max
+  // below, force a 3x upscale on every default-density JPEG no matter how
+  // large it already is. Real declared densities (100 dpi scans, 300 dpi
+  // scans) are unaffected and keep driving the upscale.
+  const declaredDensity = sourceDensity > 72 ? sourceDensity : 0;
   const densityScale =
-    sourceDensity > 0 ? Math.min(3, 300 / sourceDensity) : 1;
+    declaredDensity > 0 ? Math.min(3, 300 / declaredDensity) : 1;
   const dimensionScale =
     Math.max(width, height) < 2200
       ? Math.min(3, 2200 / Math.max(width, height))

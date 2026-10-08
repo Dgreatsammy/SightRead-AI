@@ -127,10 +127,66 @@ export function beatsToSeconds(beats: number, tempo: number, speed = 1) {
   return (beats * 60) / (tempo * speed);
 }
 
+/**
+ * How much music each measure actually contains, versus how long a full bar
+ * is. Recorded per parsed part so measure lengths can be resolved across ALL
+ * parts together (they must stay in step with one another).
+ */
+interface MeasureProbe {
+  content: number[];
+  bar: number[];
+}
+const measureProbes = new WeakMap<PlaybackPart, MeasureProbe>();
+
+function approxEqual(a: number, b: number) {
+  return Math.abs(a - b) < 0.01;
+}
+
+/**
+ * Decides how long each measure lasts in playback.
+ *
+ * A measure normally lasts a full bar, even if OMR dropped a note, so a
+ * misread rhythm doesn't shift everything after it. Only genuinely short
+ * measures are kept at their real length, because padding them is what
+ * creates silent holds with no visible rest:
+ *   - a pickup (anacrusis): a short FIRST measure followed by more music
+ *   - a bar split across a line break, written as two short measures whose
+ *     lengths add up to exactly one bar
+ *   - a short LAST measure that completes the pickup
+ * Lengths are taken as the longest content among all parts, so parts that
+ * disagree about a measure still start every measure together.
+ */
+function resolveMeasureDurations(probes: MeasureProbe[]): number[] {
+  const count = Math.max(0, ...probes.map((probe) => probe.content.length));
+  const shared = Array.from({ length: count }, (_, index) =>
+    Math.max(0, ...probes.map((probe) => probe.content[index] ?? 0)),
+  );
+  const bar = Array.from(
+    { length: count },
+    (_, index) => probes.find((probe) => probe.bar[index] !== undefined)?.bar[index] ?? 4,
+  );
+  const isShort = (index: number) =>
+    index >= 0 &&
+    index < count &&
+    shared[index] > 0 &&
+    shared[index] < bar[index] - 0.01;
+
+  return shared.map((content, index) => {
+    const legitimatelyShort =
+      isShort(index) &&
+      ((index === 0 && count > 1) ||
+        (isShort(index + 1) && approxEqual(content + shared[index + 1], bar[index])) ||
+        (isShort(index - 1) && approxEqual(shared[index - 1] + content, bar[index])) ||
+        (index === count - 1 && isShort(0) && approxEqual(shared[0] + content, bar[0])));
+    return legitimatelyShort ? content : Math.max(bar[index], content, 0.25);
+  });
+}
+
 function parsePart(
   part: Element,
   id: string,
   displayName: string,
+  durationOverrides?: number[],
 ): PlaybackPart {
   const measureElements = Array.from(part.getElementsByTagName("measure"));
   if (measureElements.length === 0) {
@@ -148,6 +204,7 @@ function parsePart(
   let firstBeatUnitBeats = 1;
   const notes: PlaybackNote[] = [];
   const measures: PlaybackMeasure[] = [];
+  const probe: MeasureProbe = { content: [], bar: [] };
 
   measureElements.forEach((measureElement, measureIndex) => {
     const attributes = measureElement.getElementsByTagName("attributes")[0];
@@ -236,11 +293,11 @@ function parsePart(
     });
 
     const expectedDuration = (beatsPerMeasure * 4) / beatType;
-    const durationBeats = Math.max(
-      expectedDuration,
-      maxCursor / divisions,
-      0.25,
-    );
+    probe.content.push(maxCursor / divisions);
+    probe.bar.push(expectedDuration);
+    const durationBeats =
+      durationOverrides?.[measureIndex] ??
+      Math.max(expectedDuration, maxCursor / divisions, 0.25);
     measures.push({
       index: measureIndex,
       number: measureElement.getAttribute("number") || String(measureIndex + 1),
@@ -261,7 +318,7 @@ function parsePart(
   });
 
   notes.sort((left, right) => left.startBeat - right.startBeat);
-  return {
+  const parsed: PlaybackPart = {
     id,
     name: displayName,
     displayName,
@@ -272,6 +329,8 @@ function parsePart(
     beatUnitBeats: firstBeatUnitBeats,
     kind: "part",
   };
+  measureProbes.set(parsed, probe);
+  return parsed;
 }
 
 const SATB_LABELS = ["Soprano", "Alto", "Tenor", "Bass"];
@@ -446,7 +505,7 @@ export function parseMusicXml(source: string): PlaybackScore {
       )
       .filter(([id]) => id.length > 0),
   );
-  const parsedParts = parts.map((part, index) => {
+  const partArgs = parts.map((part, index) => {
     const partId =
       part.getAttribute("id")?.trim() ||
       scorePartDefinitions[index]?.getAttribute("id")?.trim() ||
@@ -455,8 +514,25 @@ export function parseMusicXml(source: string): PlaybackScore {
       definitionById.get(partId) ?? scorePartDefinitions[index];
     const partName = definition ? textOf(definition, "part-name") : "";
     const displayName = partName || `Part ${index + 1}`;
-    return parsePart(part, partId, displayName);
+    return { part, partId, displayName };
   });
+  let parsedParts = partArgs.map(({ part, partId, displayName }) =>
+    parsePart(part, partId, displayName),
+  );
+  // Second pass only when a pickup / split bar needs its real length.
+  const resolved = resolveMeasureDurations(
+    parsedParts.map((parsed) => measureProbes.get(parsed)!),
+  );
+  const needsRelayout = parsedParts.some((parsed) =>
+    parsed.measures.some(
+      (measure, index) => !approxEqual(measure.durationBeats, resolved[index]),
+    ),
+  );
+  if (needsRelayout) {
+    parsedParts = partArgs.map(({ part, partId, displayName }) =>
+      parsePart(part, partId, displayName, resolved),
+    );
+  }
   const practiceTracks = expandPracticeTracks(parsedParts);
   const firstPart = practiceTracks[0];
   return {

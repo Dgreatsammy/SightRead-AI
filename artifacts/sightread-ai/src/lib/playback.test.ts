@@ -559,3 +559,61 @@ describe("playback engine", () => {
   });
 });
 
+
+
+describe("measure lengths in playback", () => {
+  const withDivisions = "<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>";
+  const q = (n = 1) => Array.from({ length: n }, () => note()).join("");
+
+  it("does not pad a pickup bar into a silent hold", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(0, q(1), withDivisions) + measure(1, q(4)) + measure(2, q(4)),
+      ),
+    );
+    expect(parsed.measures.map((m) => m.durationBeats)).toEqual([1, 4, 4]);
+    expect(parsed.measures.map((m) => m.startBeat)).toEqual([0, 1, 5]);
+  });
+
+  it("joins a bar that was split across a line break into one bar", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(1, q(4), withDivisions) +
+          measure(2, q(3)) +
+          measure(3, q(1)) +
+          measure(4, q(4)),
+      ),
+    );
+    expect(parsed.measures.map((m) => m.durationBeats)).toEqual([4, 3, 1, 4]);
+    expect(parsed.measures[3].startBeat).toBe(8);
+  });
+
+  it("lets a short closing bar complete the pickup", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(0, q(1), withDivisions) + measure(1, q(4)) + measure(2, q(3)),
+      ),
+    );
+    expect(parsed.measures.map((m) => m.durationBeats)).toEqual([1, 4, 3]);
+  });
+
+  it("still pads an isolated short bar (likely a misread note) to a full bar", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(1, q(4), withDivisions) + measure(2, q(2)) + measure(3, q(4)),
+      ),
+    );
+    expect(parsed.measures.map((m) => m.durationBeats)).toEqual([4, 4, 4]);
+  });
+
+  it("keeps two parts in step even when only one of them is short", () => {
+    const second = `<part id="P2">${measure(0, q(1), withDivisions) + measure(1, q(4))}</part>`;
+    const parsed = parseMusicXml(
+      scoreXml(measure(0, q(1), withDivisions) + measure(1, q(4)), second),
+    );
+    const starts = parsed.parts
+      .filter((p) => p.kind === "part")
+      .map((p) => p.measures.map((m) => m.startBeat));
+    expect(new Set(starts.map((s) => JSON.stringify(s))).size).toBe(1);
+  });
+});

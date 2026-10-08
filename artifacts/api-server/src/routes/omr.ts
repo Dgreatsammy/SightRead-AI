@@ -166,10 +166,17 @@ router.post(
       // that doesn't match that exact pattern.
       const xml = sanitizeAudiverisMusicXml(rawXml);
 
+      // Debug aid: with OMR_DEBUG_RAW=1 set on the server AND ?debug=raw on
+      // the request, also return Audiveris' unmodified output so a real
+      // fixture can be captured from production. Off by default.
+      const includeRaw =
+        process.env["OMR_DEBUG_RAW"] === "1" && req.query["debug"] === "raw";
+
       res.json({
         success: true,
         musicXml: xml,
         source: "audiveris",
+        ...(includeRaw ? { rawMusicXml: rawXml } : {}),
       });
     } catch (error) {
       const message =

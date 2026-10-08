@@ -15,3 +15,13 @@ createRoot(document.getElementById('root')!, {
     <App />
   </ErrorBoundary>,
 );
+
+// Installable PWA: register the service worker in production builds only, so
+// local development is never served stale cached files.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register(`${import.meta.env.BASE_URL}sw.js`)
+      .catch((error) => console.warn('Service worker registration failed', error));
+  });
+}

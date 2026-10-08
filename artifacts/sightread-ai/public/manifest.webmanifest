@@ -1,0 +1,17 @@
+{
+  "name": "SightRead AI",
+  "short_name": "SightRead",
+  "description": "Turn a photo or PDF of sheet music into a score you can practise with, and listen to each part (Soprano, Alto, Tenor, Bass) separately.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1d3045",
+  "theme_color": "#1d3045",
+  "categories": ["music", "education"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

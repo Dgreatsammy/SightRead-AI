@@ -1,3 +1,5 @@
+import { splitStackedChordsIntoVoices } from "./voiceSplit";
+
 export type PlaybackState =
   | "stopped"
   | "playing"
@@ -422,6 +424,11 @@ export function parseMusicXml(source: string): PlaybackScore {
   if (parts.length === 0) {
     throw new Error("The MusicXML score does not contain a part.");
   }
+
+  // Playback-only: split chord-stacked staves (S+A, T+B written as chords)
+  // into separate voices on this parsed copy. The drawn score uses the
+  // original source string and is never affected.
+  splitStackedChordsIntoVoices(document);
 
   const title =
     textOf(document, "work-title") ||

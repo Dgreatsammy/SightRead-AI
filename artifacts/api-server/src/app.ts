@@ -43,7 +43,19 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api", router);
 
 // Built frontend
-app.use(express.static(frontendDistDir));
+app.use(
+  express.static(frontendDistDir, {
+    setHeaders(res, filePath) {
+      // The service worker and manifest must always be revalidated so a new
+      // deploy reaches installed apps; hashed /assets files can cache forever.
+      if (/[\\/](sw\.js|manifest\.webmanifest)$/.test(filePath)) {
+        res.setHeader("Cache-Control", "no-cache");
+      } else if (/[\\/]assets[\\/]/.test(filePath)) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+    },
+  }),
+);
 
 // SPA fallback
 app.use((req, res, next) => {

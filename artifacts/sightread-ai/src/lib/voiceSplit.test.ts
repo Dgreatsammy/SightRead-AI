@@ -1,6 +1,14 @@
-import { DOMParser } from "@xmldom/xmldom";
+import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { describe, expect, it } from "vitest";
-import { sanitizeAudiverisMusicXml } from "./sanitizeAudiverisMusicXml";
+import { splitStackedChordsIntoVoices } from "./voiceSplit";
+
+// Mirrors what the app does: parse, split on the parsed copy, and (here only,
+// to inspect the result) serialise. Returns the input string if nothing changed.
+function sanitizeAudiverisMusicXml(xml: string): string {
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  if (!splitStackedChordsIntoVoices(doc as unknown as Document)) return xml;
+  return new XMLSerializer().serializeToString(doc);
+}
 
 const n = (step: string, octave: number, dur: number, chord = false, extra = "") =>
   `<note>${chord ? "<chord/>" : ""}<pitch><step>${step}</step><octave>${octave}</octave></pitch><duration>${dur}</duration><voice>1</voice><type>half</type>${extra}</note>`;
@@ -83,6 +91,17 @@ describe("tolerance for messy OMR output", () => {
     const out = run([sa + bad]);
     expect(pitched(out, "2").length).toBe(4); // only the 4 good pairs
     expect(out).toContain("<duration>8</duration>"); // bad measure untouched
+  });
+});
+
+describe("playback integration", () => {
+  it("parseMusicXml offers Soprano/Alto/Tenor/Bass without changing the drawn source", async () => {
+    (globalThis as unknown as { DOMParser: unknown }).DOMParser = DOMParser;
+    const { parseMusicXml } = await import("./playback");
+    const xml = score([sa, tb]);
+    const names = parseMusicXml(xml).parts.map((p) => p.displayName);
+    for (const label of ["Soprano", "Alto", "Tenor", "Bass"]) expect(names).toContain(label);
+    expect(xml).toBe(score([sa, tb])); // the source string used for drawing is untouched
   });
 });
 

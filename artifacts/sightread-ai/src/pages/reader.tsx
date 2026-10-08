@@ -20,6 +20,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { Link } from "wouter";
+import { assessImageResolution, readImageSize } from "@/lib/uploadQuality";
 import { demoMusicXml, isMusicXml } from "@/lib/musicxml";
 import {
   CountInBars,
@@ -138,6 +139,15 @@ export default function Reader() {
   const settingsRef = useRef(initialSettings);
   const [xml, setXml] = useState(demoMusicXml);
   const [scoreTitle, setScoreTitle] = useState("Evening Study");
+  // The user's original upload, shown untouched next to the recognised score.
+  const [original, setOriginal] = useState<{
+    url: string;
+    kind: "image" | "pdf";
+    name: string;
+  } | null>(null);
+  const [viewMode, setViewMode] = useState<"score" | "original">("score");
+  const [qualityWarning, setQualityWarning] = useState("");
+  const importSeqRef = useRef(0);
   const [scoreStatus, setScoreStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -402,6 +412,10 @@ export default function Reader() {
         setScoreTitle(
           file.name.replace(/\.(musicxml|xml)$/i, "") || "Imported score",
         );
+        importSeqRef.current++;
+        setOriginal(null);
+        setViewMode("score");
+        setQualityWarning("");
         setXml(content);
         setCurrentMeasure(1);
         setProgress(0);
@@ -419,6 +433,27 @@ export default function Reader() {
       }
 
       setIsOmrImport(true);
+
+      // Keep the untouched upload for the "Original" view, and warn early
+      // (before the long recognition step) if the picture is too small.
+      const importId = ++importSeqRef.current;
+      const isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+      setOriginal({
+        url: URL.createObjectURL(file),
+        kind: isPdf ? "pdf" : "image",
+        name: file.name,
+      });
+      setViewMode("score");
+      setQualityWarning("");
+      if (!isPdf) {
+        void readImageSize(file).then((size) => {
+          if (importId !== importSeqRef.current || !size) return;
+          setQualityWarning(
+            assessImageResolution(size.width, size.height) ?? "",
+          );
+        });
+      }
+
       const formData = new FormData();
       formData.append("file", file);
 
@@ -462,6 +497,13 @@ export default function Reader() {
       event.target.value = "";
     }
   };
+
+  useEffect(() => {
+    const url = original?.url;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [original]);
 
   const measureCount = score?.measures.length ?? 0;
   const updateRange = (start: number, end: number) => {
@@ -561,6 +603,43 @@ export default function Reader() {
               </div>
             </div>
 
+            {qualityWarning && (
+              <div
+                role="alert"
+                className="mb-4 flex items-start justify-between gap-3 rounded-[4px] border border-[#e2bc64] bg-[#fbf1d6] px-4 py-3 text-[13px] leading-6 text-[#5c4a1c]"
+                data-testid="warning-low-resolution"
+              >
+                <p>{qualityWarning}</p>
+                <button
+                  type="button"
+                  onClick={() => setQualityWarning("")}
+                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.13em] underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            {original && (
+              <div
+                className="mb-3 inline-flex rounded-full border border-[#cec3b5] bg-[#f2ece2] p-1 font-mono text-[10px] uppercase tracking-[.13em]"
+                role="tablist"
+                aria-label="Score view"
+              >
+                {(["score", "original"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={viewMode === mode}
+                    onClick={() => setViewMode(mode)}
+                    className={`rounded-full px-4 py-2 transition-colors ${viewMode === mode ? "bg-[#1d3045] text-[#f5efe5]" : "text-[#6f7776] hover:text-[#1d3045]"}`}
+                    data-testid={`tab-view-${mode}`}
+                  >
+                    {mode === "score" ? "Recognised score" : "Original"}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="score-shell relative overflow-hidden rounded-[4px] border border-[#d4c8b9] bg-[#fcf8ef]">
               {scoreStatus === "loading" && (
                 <div className="absolute inset-0 z-[2] flex min-h-[560px] flex-col items-center justify-center bg-[#fcf8ef] px-6">
@@ -619,6 +698,39 @@ export default function Reader() {
                 data-testid="score-rendered"
                 aria-label="Rendered MusicXML score"
               />
+              {original && viewMode === "original" && (
+                <div
+                  className="absolute inset-0 z-[3] overflow-auto bg-[#fcf8ef] p-3 sm:p-5"
+                  data-testid="original-upload"
+                >
+                  {original.kind === "image" ? (
+                    <img
+                      src={original.url}
+                      alt={`Original upload: ${original.name}`}
+                      className="mx-auto block h-auto max-w-full"
+                    />
+                  ) : (
+                    <object
+                      data={original.url}
+                      type="application/pdf"
+                      className="h-full min-h-[540px] w-full"
+                    >
+                      <p className="p-4 text-[13px] text-[#69737a]">
+                        This browser cannot show the PDF here.{" "}
+                        <a
+                          href={original.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline"
+                        >
+                          Open the original PDF
+                        </a>
+                        .
+                      </p>
+                    </object>
+                  )}
+                </div>
+              )}
               {scoreStatus === "ready" && (
                 <div className="pointer-events-none absolute bottom-4 left-4 flex flex-wrap gap-2">
                   <div
@@ -639,7 +751,11 @@ export default function Reader() {
               )}
             </div>
             <div className="mt-3 flex items-center justify-between font-mono text-[10px] uppercase tracking-[.13em] text-[#87908d]">
-              <span>Digital score / MusicXML</span>
+              <span>
+                {original && viewMode === "original"
+                  ? "Original upload (unchanged)"
+                  : "Digital score / MusicXML"}
+              </span>
               <span data-testid="text-score-position">
                 Measure {currentMeasure} of {measureCount || "—"}
               </span>

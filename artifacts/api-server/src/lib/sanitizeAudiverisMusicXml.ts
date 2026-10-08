@@ -227,26 +227,36 @@ function setVoice(doc: Document, note: Element, voice: string): void {
 
 /**
  * Audiveris often reads a two-voice choral staff (soprano over alto, tenor
- * over bass) as ONE voice of stacked two-note chords. Downstream, that means
- * a singer can only practise the whole staff as a unit.
+ * over bass) as ONE voice of stacked chords. Downstream, that means a singer
+ * can only practise the whole staff as a unit.
  *
- * This pass rewrites such a part so the top note of every pair is voice 1
- * and the lower note is voice 2 (joined by a <backup>), which is what
+ * This pass rewrites such a part so the top note of every stack is voice 1
+ * and the bottom note is voice 2 (joined by a <backup>), which is what
  * expandPracticeTracks needs to offer Soprano/Alto/Tenor/Bass individually.
  *
- * It is deliberately all-or-nothing per part. It does nothing unless:
- *   - the part has a single staff
- *   - every note is voice 1 (or has no voice), with no grace or unpitched
- *     notes and no existing <backup>/<forward>
- *   - every pitched note belongs to a stack of EXACTLY two notes, and each
- *     pair shares one duration and has two different, readable pitches
- *   - there is at least one such pair
- * A part with any single (unstacked) pitched note, a 3-note chord, a
- * unison pair, or an existing second voice is left byte-for-byte alone.
- *
- * Rests are mirrored into voice 2 so both voices fill every measure. Lyrics
- * stay on the top note only.
+ * Real OMR output is rarely perfectly clean, so the decision is made on the
+ * PART as a whole, and the repair is tolerant of a minority of oddities:
+ *   - The part must have one staff; at least MIN_STACK_RATIO of its pitched
+ *     note-groups must be stacks, and at least MIN_PAIR_SHARE of those stacks
+ *     must be exactly two notes. A genuinely single-voice part (a melody, or
+ *     a part whose voices are already split with <backup>) has no stacks and
+ *     is left byte-for-byte alone.
+ *   - Within a qualifying part, a lone note is treated as both voices
+ *     singing the same pitch (voice 2 gets a unison copy), and a stack of
+ *     three or more keeps only its highest and lowest notes (the extra
+ *     middle note is almost always an OMR artefact).
+ *   - A measure that already has <backup>/<forward>, a voice other than 1,
+ *     grace/unpitched notes, or a stack whose two notes differ in duration
+ *     is skipped and left exactly as Audiveris wrote it.
+ * Rests are mirrored into voice 2. Lyrics stay on the top note only.
  */
+// At least half of all note-groups must be stacks (2+ notes), and at least
+// 60% of those stacks must be exactly two notes. Tuned against real, noisy
+// Audiveris output where only ~55% of groups were clean pairs.
+const MIN_STACK_RATIO = 0.5;
+const MIN_PAIR_SHARE = 0.6;
+const MIN_GROUPS = 4;
+
 export function splitStackedChordsIntoVoices(doc: Document): boolean {
   let changed = false;
   for (const part of Array.from(doc.getElementsByTagName("part"))) {
@@ -255,147 +265,165 @@ export function splitStackedChordsIntoVoices(doc: Document): boolean {
   return changed;
 }
 
-type NotePair = { first: Element; second: Element };
+type MeasurePlan = {
+  measure: Element;
+  groups: Element[][]; // pitched note-groups in order
+  items: Array<Element[]>; // groups and rests, in document order
+};
+
+function planMeasure(measure: Element): MeasurePlan | null {
+  const items: Array<Element[]> = [];
+  const groups: Element[][] = [];
+  for (const child of childElements(measure)) {
+    if (child.tagName === "backup" || child.tagName === "forward") return null;
+    if (child.tagName !== "note") continue;
+    if (directChild(child, "grace") || directChild(child, "unpitched"))
+      return null;
+    const voice = directChild(child, "voice")?.textContent?.trim();
+    if (voice && voice !== "1") return null;
+    const isRest = !!directChild(child, "rest");
+    const isChord = !!directChild(child, "chord");
+    if (isRest) {
+      if (isChord) return null;
+      items.push([child]);
+    } else if (isChord) {
+      const last = items[items.length - 1];
+      if (!last || directChild(last[0], "rest")) return null;
+      last.push(child);
+    } else {
+      const group = [child];
+      items.push(group);
+      groups.push(group);
+    }
+  }
+  for (const group of groups) {
+    for (const note of group) if (pitchValue(note) === null) return null;
+    // Stacks must share one duration or timing cannot be preserved.
+    const d0 = noteDuration(group[0]);
+    if (d0 === null) return null;
+    if (group.some((note) => noteDuration(note) !== d0)) return null;
+  }
+  return { measure, groups, items };
+}
 
 function trySplitPart(doc: Document, part: Element): boolean {
   const measures = childElements(part).filter((el) => el.tagName === "measure");
   if (measures.length === 0) return false;
 
-  // ---- Validation (no mutation until everything passes) ----
-  const pairsByMeasure = new Map<Element, NotePair[]>();
-  let pairCount = 0;
-
-  for (const measure of measures) {
-    const pairs: NotePair[] = [];
-    let previous: Element | null = null;
-    let open: NotePair | null = null;
-
-    for (const child of childElements(measure)) {
-      if (child.tagName === "backup" || child.tagName === "forward") return false;
-      if (child.tagName !== "note") continue;
-
-      if (directChild(child, "grace") || directChild(child, "unpitched"))
-        return false;
-      const staff = directChild(child, "staff")?.textContent?.trim();
-      if (staff && staff !== "1") return false;
-      const voice = directChild(child, "voice")?.textContent?.trim();
-      if (voice && voice !== "1") return false;
-
-      const isChord = !!directChild(child, "chord");
-      const isRest = !!directChild(child, "rest");
-
-      if (isChord) {
-        // A chord note must follow a pitched, non-rest, non-chord note.
-        if (isRest || !previous || directChild(previous, "rest")) return false;
-        if (open) return false; // third note in a stack
-        if (!open) {
-          const prevIsChord = !!directChild(previous, "chord");
-          if (prevIsChord) return false;
-          open = { first: previous, second: child };
-          pairs.push(open);
-        }
-      } else {
-        // A new non-chord note closes any open stack; the previous note must
-        // have been part of a pair if it was pitched.
-        if (previous && !directChild(previous, "rest")) {
-          const prevIsChord = !!directChild(previous, "chord");
-          if (!prevIsChord && !(open && open.first === previous)) return false;
-        }
-        open = null;
-      }
-      previous = child;
-    }
-    // The final pitched note of the measure must also be paired.
-    if (previous && !directChild(previous, "rest")) {
-      const prevIsChord = !!directChild(previous, "chord");
-      const lastPair = pairs[pairs.length - 1];
-      if (!prevIsChord || !lastPair || lastPair.second !== previous) return false;
-    }
-
-    for (const pair of pairs) {
-      const d1 = noteDuration(pair.first);
-      const d2 = noteDuration(pair.second);
-      if (d1 === null || d2 === null || d1 !== d2) return false;
-      const p1 = pitchValue(pair.first);
-      const p2 = pitchValue(pair.second);
-      if (p1 === null || p2 === null || p1 === p2) return false;
-    }
-    pairCount += pairs.length;
-    pairsByMeasure.set(measure, pairs);
+  // One staff only.
+  for (const note of Array.from(part.getElementsByTagName("note"))) {
+    const staff = directChild(note, "staff")?.textContent?.trim();
+    if (staff && staff !== "1") return false;
   }
-  if (pairCount === 0) return false;
 
-  // ---- Rewrite ----
+  // Gate on the part as a whole, counting every measure (including ones we
+  // will later skip) so one odd measure can't hide or fake the pattern.
+  let totalGroups = 0;
+  let pairGroups = 0;
+  let stackGroups = 0;
+  const plans: MeasurePlan[] = [];
   for (const measure of measures) {
-    const pairs = pairsByMeasure.get(measure) ?? [];
-    if (pairs.length === 0) continue; // rest-only measure: nothing to split
-
-    const upper: Element[] = []; // voice 1 line, in order (no chord notes)
-    const lower: Element[] = []; // voice 2 line, same timing
-    let total = 0;
-    const pairOf = new Map<Element, NotePair>();
-    for (const pair of pairs) {
-      pairOf.set(pair.first, pair);
-      pairOf.set(pair.second, pair);
-    }
-
-    let lastNote: Element | null = null;
-    for (const child of childElements(measure)) {
-      if (child.tagName !== "note") continue;
-      lastNote = child;
-      const pair = pairOf.get(child);
-      if (pair) {
-        if (child !== pair.first) continue; // handled with its partner
-        const firstIsTop = pitchValue(pair.first)! > pitchValue(pair.second)!;
-        const top = firstIsTop ? pair.first : pair.second;
-        const low = firstIsTop ? pair.second : pair.first;
-
-        const topChord = directChild(top, "chord");
-        if (topChord) top.removeChild(topChord);
-        const lowChord = directChild(low, "chord");
-        if (lowChord) low.removeChild(lowChord);
-
-        if (!firstIsTop) {
-          // Top note was listed second: put it where the pair started.
-          measure.insertBefore(top, pair.first);
-        }
-        measure.removeChild(low);
-
-        setVoice(doc, top, "1");
-        setVoice(doc, low, "2");
-        const topStem = directChild(top, "stem");
-        if (topStem) topStem.textContent = "up";
-        const lowStem = directChild(low, "stem");
-        if (lowStem) lowStem.textContent = "down";
-        for (const lyric of Array.from(low.childNodes)) {
-          if ((lyric as Element).tagName === "lyric") low.removeChild(lyric);
-        }
-        upper.push(top);
-        lower.push(low);
-        total += noteDuration(top)!;
-      } else if (directChild(child, "rest")) {
-        const mirror = child.cloneNode(true) as Element;
-        for (const c of Array.from(mirror.childNodes)) {
-          if ((c as Element).tagName === "lyric") mirror.removeChild(c);
-        }
-        setVoice(doc, mirror, "2");
-        setVoice(doc, child, "1");
-        upper.push(child);
-        lower.push(mirror);
-        total += noteDuration(child) ?? 0;
+    let hasChord = false;
+    let measureGroups = 0;
+    let measurePairs = 0;
+    let sizes: number[] = [];
+    let cur = 0;
+    for (const note of childElements(measure)) {
+      if (note.tagName !== "note" || directChild(note, "rest")) continue;
+      if (directChild(note, "chord")) {
+        cur++;
+        hasChord = true;
+      } else {
+        if (cur) sizes.push(cur);
+        cur = 1;
       }
     }
+    if (cur) sizes.push(cur);
+    measureGroups = sizes.length;
+    measurePairs = sizes.filter((n) => n === 2).length;
+    totalGroups += measureGroups;
+    pairGroups += measurePairs;
+    stackGroups += sizes.filter((n) => n >= 2).length;
+    void hasChord;
+    const plan = planMeasure(measure);
+    if (plan && plan.groups.length > 0) plans.push(plan);
+  }
+  if (totalGroups < MIN_GROUPS) return false;
+  if (stackGroups / totalGroups < MIN_STACK_RATIO) return false;
+  if (pairGroups / stackGroups < MIN_PAIR_SHARE) return false;
+  if (plans.length === 0) return false;
 
-    // Insert backup + voice 2 line right after the last note of the measure.
-    const lastVoice1 = upper[upper.length - 1] ?? lastNote;
-    if (!lastVoice1) continue;
+  // Rewrite.
+  let changed = false;
+  for (const { measure, items } of plans) {
+    const upper: Element[] = [];
+    const lower: Element[] = [];
+    let total = 0;
+    const first = items[0][0];
+    void first;
+
+    for (const group of items) {
+      if (directChild(group[0], "rest")) {
+        const rest = group[0];
+        const mirror = rest.cloneNode(true) as Element;
+        stripForVoiceTwo(mirror);
+        setVoice(doc, rest, "1");
+        setVoice(doc, mirror, "2");
+        upper.push(rest);
+        lower.push(mirror);
+        total += noteDuration(rest) ?? 0;
+        continue;
+      }
+      const sorted = [...group].sort((x, y) => pitchValue(y)! - pitchValue(x)!);
+      const top = sorted[0];
+      let low: Element;
+      if (sorted.length === 1) {
+        low = top.cloneNode(true) as Element; // unison copy for voice 2
+      } else {
+        low = sorted[sorted.length - 1];
+      }
+
+      // Position: keep the top note where the group started.
+      const groupStart = group[0];
+      for (const note of group) {
+        const chord = directChild(note, "chord");
+        if (chord) note.removeChild(chord);
+      }
+      if (top !== groupStart) measure.insertBefore(top, groupStart);
+      for (const note of group) {
+        if (note !== top) measure.removeChild(note);
+      }
+      stripForVoiceTwo(low);
+
+      setVoice(doc, top, "1");
+      setVoice(doc, low, "2");
+      const topStem = directChild(top, "stem");
+      if (topStem && sorted.length > 1) topStem.textContent = "up";
+      const lowStem = directChild(low, "stem");
+      if (lowStem && sorted.length > 1) lowStem.textContent = "down";
+      upper.push(top);
+      lower.push(low);
+      total += noteDuration(top)!;
+    }
+
+    const lastUpper = upper[upper.length - 1];
+    const anchor: Node | null = lastUpper.nextSibling;
     const backup = doc.createElement("backup");
     const duration = doc.createElement("duration");
     duration.textContent = String(total);
     backup.appendChild(duration);
-    let anchor: Node | null = lastVoice1.nextSibling;
     measure.insertBefore(backup, anchor);
     for (const el of lower) measure.insertBefore(el, anchor);
+    changed = true;
   }
-  return true;
+  return changed;
+}
+
+/** Removes lyrics and one-off notations that belong to the top line only. */
+function stripForVoiceTwo(note: Element): void {
+  for (const child of Array.from(note.childNodes)) {
+    const tag = (child as Element).tagName;
+    if (tag === "lyric" || tag === "notations" || tag === "beam")
+      note.removeChild(child);
+  }
 }

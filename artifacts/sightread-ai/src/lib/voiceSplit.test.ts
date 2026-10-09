@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { parseMusicXml } from "./playback";
 import { splitStackedChordsIntoVoices } from "./voiceSplit";
 
 // Mirrors what the app does: parse, split on the parsed copy, and (here only,
@@ -10,6 +11,11 @@ function sanitizeAudiverisMusicXml(xml: string): string {
   if (!splitStackedChordsIntoVoices(doc as unknown as Document)) return xml;
   return new XMLSerializer().serializeToString(doc);
 }
+
+// playback.ts reads the global DOMParser when it parses (as in a browser).
+beforeAll(() => {
+  (globalThis as unknown as { DOMParser: unknown }).DOMParser = DOMParser;
+});
 
 const n = (step: string, octave: number, dur: number, chord = false, extra = "") =>
   `<note>${chord ? "<chord/>" : ""}<pitch><step>${step}</step><octave>${octave}</octave></pitch><duration>${dur}</duration><voice>1</voice><type>half</type>${extra}</note>`;
@@ -146,8 +152,6 @@ describe("real Godrest scan (openhymnal PDF, Audiveris output)", () => {
   );
 
   it("offers Soprano, Alto, Tenor and Bass", async () => {
-    (globalThis as unknown as { DOMParser: unknown }).DOMParser = DOMParser;
-    const { parseMusicXml } = await import("./playback");
     const names = parseMusicXml(xml).parts.map((p) => p.displayName);
     for (const label of ["Soprano", "Alto", "Tenor", "Bass"]) {
       expect(names).toContain(label);
@@ -155,8 +159,6 @@ describe("real Godrest scan (openhymnal PDF, Audiveris output)", () => {
   });
 
   it("gives every voice a note in every full bar it has notes for", async () => {
-    (globalThis as unknown as { DOMParser: unknown }).DOMParser = DOMParser;
-    const { parseMusicXml } = await import("./playback");
     const score = parseMusicXml(xml);
     const voices = score.parts.filter((p) =>
       ["Soprano", "Alto", "Tenor", "Bass"].includes(p.displayName),
@@ -179,8 +181,6 @@ describe("real Godrest scan (openhymnal PDF, Audiveris output)", () => {
   });
 
   it("the drawn source is never modified by playback parsing", async () => {
-    (globalThis as unknown as { DOMParser: unknown }).DOMParser = DOMParser;
-    const { parseMusicXml } = await import("./playback");
     const copy = `${xml}`;
     parseMusicXml(xml);
     expect(xml).toBe(copy);

@@ -151,7 +151,8 @@ function approxEqual(a: number, b: number) {
  * creates silent holds with no visible rest:
  *   - a pickup (anacrusis): a short FIRST measure followed by more music
  *   - a bar split across a line break, written as two short measures whose
- *     lengths add up to exactly one bar
+ *     lengths add up to one bar or less (any missing beat becomes a single
+ *     short silence instead of two long pauses)
  *   - a short LAST measure that completes the pickup
  * Lengths are taken as the longest content among all parts, so parts that
  * disagree about a measure still start every measure together.
@@ -171,15 +172,40 @@ function resolveMeasureDurations(probes: MeasureProbe[]): number[] {
     shared[index] > 0 &&
     shared[index] < bar[index] - 0.01;
 
-  return shared.map((content, index) => {
-    const legitimatelyShort =
+  const result: number[] = new Array(count);
+  let index = 0;
+  while (index < count) {
+    const content = shared[index];
+    if (isShort(index) && index === 0 && count > 1) {
+      // Pickup bar: keep its real length.
+      result[index] = content;
+      index += 1;
+    } else if (
       isShort(index) &&
-      ((index === 0 && count > 1) ||
-        (isShort(index + 1) && approxEqual(content + shared[index + 1], bar[index])) ||
-        (isShort(index - 1) && approxEqual(shared[index - 1] + content, bar[index])) ||
-        (index === count - 1 && isShort(0) && approxEqual(shared[0] + content, bar[0])));
-    return legitimatelyShort ? content : Math.max(bar[index], content, 0.25);
-  });
+      isShort(index + 1) &&
+      content + shared[index + 1] <= bar[index] + 0.01
+    ) {
+      // One bar written as two short measures (e.g. across a line break).
+      // If a beat or two is missing (an unread rest), it is lost once, as a
+      // short silence at the end, rather than as two long pauses.
+      result[index] = content;
+      result[index + 1] = bar[index] - content;
+      index += 2;
+    } else if (
+      isShort(index) &&
+      index === count - 1 &&
+      isShort(0) &&
+      approxEqual(shared[0] + content, bar[0])
+    ) {
+      // Short closing bar that completes the pickup.
+      result[index] = content;
+      index += 1;
+    } else {
+      result[index] = Math.max(bar[index], content, 0.25);
+      index += 1;
+    }
+  }
+  return result;
 }
 
 function parsePart(

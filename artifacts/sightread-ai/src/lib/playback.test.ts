@@ -606,6 +606,19 @@ describe("measure lengths in playback", () => {
     expect(parsed.measures.map((m) => m.durationBeats)).toEqual([4, 4, 4]);
   });
 
+  it("fills a missing beat once when two short bars add up to less than a bar", () => {
+    const parsed = parseMusicXml(
+      scoreXml(
+        measure(1, q(4), withDivisions) +
+          measure(2, q(2)) +
+          measure(3, q(1)) +
+          measure(4, q(4)),
+      ),
+    );
+    expect(parsed.measures.map((m) => m.durationBeats)).toEqual([4, 2, 2, 4]);
+    expect(parsed.measures[3].startBeat).toBe(8);
+  });
+
   it("keeps two parts in step even when only one of them is short", () => {
     const second = `<part id="P2">${measure(0, q(1), withDivisions) + measure(1, q(4))}</part>`;
     const parsed = parseMusicXml(

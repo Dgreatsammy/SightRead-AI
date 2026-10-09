@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { describe, expect, it } from "vitest";
 import { splitStackedChordsIntoVoices } from "./voiceSplit";
@@ -86,22 +87,103 @@ describe("tolerance for messy OMR output", () => {
     expect(voicesOf(out, 0).filter((x) => x.pitch === "C" && x.voice).length).toBe(0);
   });
 
-  it("skips a measure whose pair has mismatched durations, still splits the rest", () => {
-    const bad = m(5, n("D", 5, 4) + n("A", 4, 8, true));
-    const out = run([sa + bad]);
-    expect(pitched(out, "2").length).toBe(4); // only the 4 good pairs
-    expect(out).toContain("<duration>8</duration>"); // bad measure untouched
+  it("lets the two notes of a pair keep their own durations", () => {
+    const odd = m(5, n("D", 5, 4) + n("A", 4, 8, true));
+    const out = run([sa + odd]);
+    expect(pitched(out, "1").at(-1)).toBe("D");
+    expect(pitched(out, "2").at(-1)).toBe("A");
+    expect(out).toContain("<duration>8</duration>");
   });
 });
 
-describe("playback integration", () => {
-  it("parseMusicXml offers Soprano/Alto/Tenor/Bass without changing the drawn source", async () => {
+describe("mixed conventions found in real Audiveris output", () => {
+  const v2 = (step: string, octave: number, dur: number) =>
+    n(step, octave, dur).replace("<voice>1", "<voice>2");
+  // Bar like real bar 2 of the Godrest scan: a unison written as a second
+  // voice after <backup>, then thirds written as stacked chords.
+  const mixedBar = (i: number) =>
+    m(
+      i,
+      n("E", 4, 2) +
+        n("G", 4, 2) + n("B", 4, 2, true) +
+        n("F", 4, 2) + n("B", 4, 2, true) +
+        n("D", 4, 2) + n("A", 4, 2, true) +
+        `<backup><duration>8</duration></backup>` +
+        v2("E", 4, 2),
+    );
+  const mixed = [1, 2, 3, 4].map(mixedBar).join("");
+
+  it("completes the lower voice from chords AND second-voice notes", () => {
+    const out = run([mixed]);
+    expect(pitched(out, "1").slice(0, 4)).toEqual(["E", "B", "B", "A"]);
+    expect(pitched(out, "2").slice(0, 4)).toEqual(["E", "G", "F", "D"]);
+  });
+
+  it("copes with <forward> positioning of a stray voice", () => {
+    // Upper line fills 8 units; the stray voice-2 note is placed by <forward>
+    // so that it lands exactly under the third upper note (start 4).
+    const withForward =
+      mixed +
+      m(5, n("E", 4, 2) + n("G", 4, 2, true) + n("A", 4, 2) + n("B", 4, 2) + n("C", 5, 2) +
+        `<backup><duration>8</duration></backup><forward><duration>4</duration></forward>` +
+        v2("G", 4, 2));
+    const out = run([withForward]);
+    expect(out).not.toContain("<forward>");
+    const lastMeasureLower = pitched(out, "2");
+    expect(lastMeasureLower.length).toBe(pitched(out, "1").length);
+  });
+
+  it("is idempotent on mixed output", () => {
+    const once = run([mixed]);
+    expect(sanitizeAudiverisMusicXml(once)).toBe(once);
+  });
+});
+
+describe("real Godrest scan (openhymnal PDF, Audiveris output)", () => {
+  const xml = readFileSync(
+    new URL("./__fixtures__/godrest-openhymnal-audiveris.xml", import.meta.url),
+    "utf8",
+  );
+
+  it("offers Soprano, Alto, Tenor and Bass", async () => {
     (globalThis as unknown as { DOMParser: unknown }).DOMParser = DOMParser;
     const { parseMusicXml } = await import("./playback");
-    const xml = score([sa, tb]);
     const names = parseMusicXml(xml).parts.map((p) => p.displayName);
-    for (const label of ["Soprano", "Alto", "Tenor", "Bass"]) expect(names).toContain(label);
-    expect(xml).toBe(score([sa, tb])); // the source string used for drawing is untouched
+    for (const label of ["Soprano", "Alto", "Tenor", "Bass"]) {
+      expect(names).toContain(label);
+    }
+  });
+
+  it("gives every voice a note in every full bar it has notes for", async () => {
+    (globalThis as unknown as { DOMParser: unknown }).DOMParser = DOMParser;
+    const { parseMusicXml } = await import("./playback");
+    const score = parseMusicXml(xml);
+    const voices = score.parts.filter((p) =>
+      ["Soprano", "Alto", "Tenor", "Bass"].includes(p.displayName),
+    );
+    expect(voices).toHaveLength(4);
+    // The scan has exactly one beat missing in the source data (an unread
+    // rest at bars 10-11). Apart from that, Soprano and Alto must fill every
+    // bar completely and never overflow one.
+    for (const p of voices.filter((v) => ["Soprano", "Alto"].includes(v.displayName))) {
+      let totalGap = 0;
+      for (const measure of p.measures) {
+        const sounding = p.notes
+          .filter((note) => note.measureIndex === measure.index && !note.isRest)
+          .reduce((sum, note) => sum + note.durationBeats, 0);
+        expect(sounding).toBeLessThanOrEqual(measure.durationBeats + 0.05);
+        totalGap += measure.durationBeats - sounding;
+      }
+      expect(totalGap).toBeCloseTo(1, 1);
+    }
+  });
+
+  it("the drawn source is never modified by playback parsing", async () => {
+    (globalThis as unknown as { DOMParser: unknown }).DOMParser = DOMParser;
+    const { parseMusicXml } = await import("./playback");
+    const copy = `${xml}`;
+    parseMusicXml(xml);
+    expect(xml).toBe(copy);
   });
 });
 

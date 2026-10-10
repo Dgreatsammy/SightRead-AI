@@ -211,7 +211,12 @@ export default function Reader() {
   }, [isOmrImport, scoreStatus]);
 
   useEffect(() => {
-    const engine = new MusicalPlaybackEngine(handleProgress);
+    // Notes are scheduled slightly ahead on the audio clock, and on-screen
+    // progress is refreshed at most ~16 times a second, so a busy phone
+    // does not make the music skip.
+    const engine = new MusicalPlaybackEngine(handleProgress, undefined, {
+      reportIntervalMs: 60,
+    });
     engineRef.current = engine;
     engine.setTempo(initialSettings.tempo);
     engine.setPlaybackSpeed(initialSettings.speed);

@@ -6,6 +6,7 @@ import {
   MusicalPlaybackEngine,
   parseMusicXml,
   type PlaybackSnapshot,
+  type PlaybackEngineOptions,
 } from "./playback";
 
 type NoteOptions = {
@@ -153,11 +154,13 @@ function createEngine(
       `${measure(1, note({ duration: 1 }), oneFour)}${measure(2, note({ step: "D", duration: 1 }), oneFour)}`,
     ),
   ),
+  options: PlaybackEngineOptions = {},
 ) {
   const snapshots: PlaybackSnapshot[] = [];
   const engine = new MusicalPlaybackEngine(
     (snapshot) => snapshots.push(snapshot),
     () => currentClock,
+    options,
   );
   engine.setScore(score);
   return { engine, snapshots };
@@ -628,5 +631,112 @@ describe("measure lengths in playback", () => {
       .filter((p) => p.kind === "part")
       .map((p) => p.measures.map((m) => m.startBeat));
     expect(new Set(starts.map((s) => JSON.stringify(s))).size).toBe(1);
+  });
+});
+
+
+describe("playback timing on a busy device", () => {
+  // One silent beat, then a note on beat 1 (1.0 s at 60 BPM, one-beat steps).
+  const restThenNote = () =>
+    parseMusicXml(
+      scoreXml(
+        measure(
+          1,
+          `${note({ rest: true, duration: 1 })}${note({ duration: 1 })}`,
+          oneFour,
+        ),
+      ),
+    );
+  const sounding = (frequency: number) =>
+    FakeAudioContext.latest?.oscillators.filter(
+      (o) => Math.abs(o.frequency.value - frequency) < 0.01,
+    ) ?? [];
+  const middleC = midiToFrequency(60);
+
+  it("starts a note exactly on time even if the timer stalls just before it", async () => {
+    const { engine } = createEngine(restThenNote());
+    engine.setTempo(60);
+    engine.play();
+    await advance(880); // the note is handed to the audio clock ~150 ms early
+    currentClock += 380; // the page freezes for 380 ms (a busy phone)
+    await vi.advanceTimersByTimeAsync(20);
+    const [fundamental] = sounding(middleC);
+    expect(fundamental.startTime).toBeCloseTo(1.0, 2);
+  });
+
+  it("without lookahead the same stall makes the note start late", async () => {
+    const { engine } = createEngine(restThenNote(), { lookaheadSeconds: 0 });
+    engine.setTempo(60);
+    engine.play();
+    await advance(880);
+    currentClock += 380;
+    await vi.advanceTimersByTimeAsync(20);
+    const [fundamental] = sounding(middleC);
+    expect(fundamental.startTime).toBeGreaterThan(1.15);
+  });
+
+  it("does not hand a note over long before it is due", async () => {
+    const { engine } = createEngine(restThenNote());
+    engine.setTempo(60);
+    engine.play();
+    await advance(500);
+    expect(sounding(middleC)).toHaveLength(0);
+  });
+
+  it("cancels a note scheduled ahead when paused, and plays it once on resume", async () => {
+    const { engine } = createEngine(restThenNote());
+    engine.setTempo(60);
+    engine.play();
+    await advance(900);
+    expect(sounding(middleC)).toHaveLength(1);
+    engine.pause();
+    const [scheduled] = sounding(middleC);
+    expect(scheduled.stopTime).toBeLessThanOrEqual(0.9 + 0.03);
+    engine.play();
+    await advance(60);
+    const all = sounding(middleC);
+    expect(all).toHaveLength(2);
+    expect(all[1].startTime).toBeCloseTo(1.0, 1);
+  });
+
+  it("cancels a metronome click scheduled ahead when paused", async () => {
+    const { engine } = createEngine(restThenNote());
+    engine.setTempo(60);
+    engine.setMetronome(true);
+    engine.play();
+    await advance(900);
+    const weakClicks = sounding(880);
+    expect(weakClicks).toHaveLength(1);
+    expect(weakClicks[0].startTime).toBeCloseTo(1.0, 2);
+    engine.pause();
+    expect(weakClicks[0].stopTime).toBeLessThanOrEqual(0.9 + 0.03);
+  });
+
+  it("limits on-screen progress updates when asked to, but never delays state changes", async () => {
+    const unthrottled = createEngine();
+    unthrottled.engine.setTempo(60);
+    unthrottled.engine.play();
+    await advance(2100);
+
+    const throttled = createEngine(undefined, { reportIntervalMs: 100 });
+    throttled.engine.setTempo(60);
+    throttled.engine.play();
+    await advance(2100);
+
+    expect(throttled.snapshots.length).toBeLessThan(unthrottled.snapshots.length / 3);
+    expect(unthrottled.snapshots.at(-1)?.state).toBe("completed");
+    expect(throttled.snapshots.at(-1)?.state).toBe("completed");
+  });
+
+  it("still reports each loop restart while throttled", async () => {
+    const { engine, snapshots } = createEngine(undefined, { reportIntervalMs: 100 });
+    engine.setRange(0, 0);
+    engine.setTempo(60);
+    engine.setLoop(true);
+    engine.play();
+    await advance(2150);
+    const loopCounts = new Set(snapshots.map((s) => s.loopCount));
+    expect(loopCounts.has(1)).toBe(true);
+    expect(loopCounts.has(2)).toBe(true);
   });
 });

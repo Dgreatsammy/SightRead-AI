@@ -578,9 +578,28 @@ type ActiveVoice = {
   gain: GainNode;
 };
 
+/**
+ * Tuning for the engine. The defaults suit a phone:
+ *  - lookaheadSeconds: notes and clicks are handed to the audio clock this far
+ *    BEFORE they are due, so a busy moment on the main thread (drawing the
+ *    score, a slow CPU, battery saver) cannot make them start late.
+ *  - reportIntervalMs: at most one on-screen progress update per interval
+ *    (0 = update on every audio tick). State changes are always reported
+ *    immediately.
+ */
+export interface PlaybackEngineOptions {
+  lookaheadSeconds?: number;
+  reportIntervalMs?: number;
+}
+
+export const DEFAULT_LOOKAHEAD_SECONDS = 0.15;
+
 export class MusicalPlaybackEngine {
   private readonly onProgress: (snapshot: PlaybackSnapshot) => void;
   private readonly clock: () => number;
+  private readonly lookaheadSeconds: number;
+  private readonly reportIntervalMs: number;
+  private lastReportAt = Number.NEGATIVE_INFINITY;
   private score: PlaybackScore | null = null;
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -610,9 +629,15 @@ export class MusicalPlaybackEngine {
   constructor(
     onProgress: (snapshot: PlaybackSnapshot) => void,
     clock: () => number = () => performance.now(),
+    options: PlaybackEngineOptions = {},
   ) {
     this.onProgress = onProgress;
     this.clock = clock;
+    this.lookaheadSeconds = Math.max(
+      0,
+      options.lookaheadSeconds ?? DEFAULT_LOOKAHEAD_SECONDS,
+    );
+    this.reportIntervalMs = Math.max(0, options.reportIntervalMs ?? 0);
   }
 
   setScore(score: PlaybackScore) {
@@ -790,23 +815,29 @@ export class MusicalPlaybackEngine {
       this.playbackSpeed;
     this.lastWallTime = now;
 
+    const lookaheadBeats = this.lookaheadBeats();
+
     if (this.state === "counting-in") {
       this.countInElapsedBeats += deltaBeats;
       while (
         this.nextCountInBeat * this.score.beatUnitBeats <
           this.countInTotalBeats - 0.0001 &&
         this.nextCountInBeat * this.score.beatUnitBeats <=
-          this.countInElapsedBeats + 0.0001
+          this.countInElapsedBeats + lookaheadBeats + 0.0001
       ) {
         this.playMetronomeClick(
           this.nextCountInBeat % this.score.beatsPerBar === 0,
+          this.delayFor(
+            this.nextCountInBeat * this.score.beatUnitBeats -
+              this.countInElapsedBeats,
+          ),
         );
         this.nextCountInBeat += 1;
       }
       if (this.countInElapsedBeats >= this.countInTotalBeats) {
         this.finishCountIn();
       } else {
-        this.report();
+        this.reportThrottled();
         return;
       }
     }
@@ -819,8 +850,9 @@ export class MusicalPlaybackEngine {
     while (this.nextNoteIndex < this.score.notes.length) {
       const note = this.score.notes[this.nextNoteIndex];
       if (note.startBeat >= rangeEndBeat) break;
-      if (note.startBeat > playbackPosition) break;
-      if (note.startBeat >= this.rangeStartBeat()) this.playNote(note);
+      if (note.startBeat > playbackPosition + lookaheadBeats) break;
+      if (note.startBeat >= this.rangeStartBeat())
+        this.playNote(note, this.delayFor(note.startBeat - this.positionBeat));
       this.nextNoteIndex += 1;
     }
 
@@ -831,6 +863,7 @@ export class MusicalPlaybackEngine {
         this.nextMetronomeBeat = this.positionBeat;
         this.loopCount += 1;
         this.stopVoices();
+        this.report(); // a loop restart is a state change: show it at once
       } else {
         this.positionBeat = rangeEndBeat;
         this.clearTimer();
@@ -841,13 +874,25 @@ export class MusicalPlaybackEngine {
         return;
       }
     }
-    this.report();
+    this.reportThrottled();
   }
 
-  private playNote(note: PlaybackNote) {
+  /** Beats that fit inside the lookahead window at the current speed. */
+  private lookaheadBeats() {
+    return this.lookaheadSeconds * (this.tempo / 60) * this.playbackSpeed;
+  }
+
+  /** Seconds from now until something `beatsAhead` beats away is due (never negative). */
+  private delayFor(beatsAhead: number) {
+    if (beatsAhead <= 0) return 0;
+    return beatsToSeconds(beatsAhead, this.tempo, this.playbackSpeed);
+  }
+
+  private playNote(note: PlaybackNote, delay = 0) {
     if (note.isRest || note.midi === null || !this.context) return;
     const frequency = midiToFrequency(note.midi);
-    const now = this.context.currentTime;
+    // Scheduled on the audio clock: `now` is the moment the note must start.
+    const now = this.context.currentTime + delay;
     const elapsedBeats = Math.max(0, this.positionBeat - note.startBeat);
     const remainingBeats = Math.max(0.06, note.durationBeats - elapsedBeats);
     const duration = Math.max(
@@ -888,14 +933,14 @@ export class MusicalPlaybackEngine {
         this.voiceCleanupTimers.delete(cleanupTimer);
         this.activeVoices.delete(voice);
       },
-      (duration + 0.05) * 1000,
+      (delay + duration + 0.05) * 1000,
     );
     this.voiceCleanupTimers.add(cleanupTimer);
   }
 
-  private playMetronomeClick(strong: boolean) {
+  private playMetronomeClick(strong: boolean, delay = 0) {
     if (!this.context || (!this.metronome && !this.isCountingIn())) return;
-    const now = this.context.currentTime;
+    const now = this.context.currentTime + delay;
     const oscillator = this.context.createOscillator();
     const gain = this.context.createGain();
     oscillator.type = "square";
@@ -907,20 +952,36 @@ export class MusicalPlaybackEngine {
     gain.connect(this.ensureMasterGain());
     oscillator.start(now);
     oscillator.stop(now + 0.065);
+    // Tracked like a note so pause/stop also cancels a click scheduled ahead.
+    const voice = { oscillators: [oscillator], gain };
+    this.activeVoices.add(voice);
+    let cleanupTimer = 0;
+    cleanupTimer = window.setTimeout(
+      () => {
+        this.voiceCleanupTimers.delete(cleanupTimer);
+        this.activeVoices.delete(voice);
+      },
+      (delay + 0.065 + 0.05) * 1000,
+    );
+    this.voiceCleanupTimers.add(cleanupTimer);
   }
 
   private schedulePlaybackMetronome(rangeEndBeat: number) {
     if (!this.score) return;
     const unit = this.score.beatUnitBeats;
+    const lookaheadBeats = this.lookaheadBeats();
     while (
-      this.nextMetronomeBeat <= this.positionBeat + 0.0001 &&
+      this.nextMetronomeBeat <= this.positionBeat + lookaheadBeats + 0.0001 &&
       this.nextMetronomeBeat < rangeEndBeat
     ) {
       const measure = this.measureAt(this.nextMetronomeBeat);
       const beatInMeasure = measure
         ? Math.round((this.nextMetronomeBeat - measure.startBeat) / unit)
         : 0;
-      this.playMetronomeClick(beatInMeasure === 0);
+      this.playMetronomeClick(
+        beatInMeasure === 0,
+        this.delayFor(this.nextMetronomeBeat - this.positionBeat),
+      );
       this.nextMetronomeBeat += unit;
     }
   }
@@ -1045,7 +1106,17 @@ export class MusicalPlaybackEngine {
     return current;
   }
 
+  /** Progress updates for the screen, limited to reportIntervalMs. */
+  private reportThrottled() {
+    if (this.reportIntervalMs <= 0) {
+      this.report();
+      return;
+    }
+    if (this.clock() - this.lastReportAt >= this.reportIntervalMs) this.report();
+  }
+
   private report() {
+    this.lastReportAt = this.clock();
     const durationBeats = Math.max(
       0,
       this.rangeEndBeat() - this.rangeStartBeat(),

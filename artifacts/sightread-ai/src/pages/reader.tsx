@@ -30,6 +30,10 @@ import {
   type PlaybackSnapshot,
   type PlaybackState,
 } from "@/lib/playback";
+import {
+  isPlaybackDebugRequested,
+  PlaybackDiagnosticsPanel,
+} from "@/components/playback-diagnostics";
 
 type PracticeSettings = {
   tempo: number;
@@ -192,7 +196,15 @@ export default function Reader() {
     setPlayback(snapshot.state);
     setCurrentMeasure(snapshot.currentMeasure + 1);
     setCurrentNoteMidi(snapshot.currentNoteMidi);
-    setProgress(snapshot.progress);
+    // Only re-draw the page when the bar visibly moves (about half a percent);
+    // every extra redraw is main-thread work a phone could do without.
+    setProgress((previous) =>
+      snapshot.progress === 0 ||
+      snapshot.progress === 1 ||
+      Math.abs(snapshot.progress - previous) >= 0.005
+        ? snapshot.progress
+        : previous,
+    );
     setCountInBeat(snapshot.countInBeat);
     setCountInBeatsTotal(snapshot.countInBeatsTotal);
     setLoopCount(snapshot.loopCount);
@@ -537,6 +549,9 @@ export default function Reader() {
 
   return (
     <main className="paper-grain min-h-[100dvh] bg-[#e9e3d8] text-[#21354a]">
+      {isPlaybackDebugRequested() && (
+        <PlaybackDiagnosticsPanel getEngine={() => engineRef.current} />
+      )}
       <header className="flex min-h-[68px] items-center justify-between border-b border-[#33475d] bg-[#1d3045] px-5 text-[#f5efe5] lg:px-8">
         <div className="flex items-center gap-5">
           <Link

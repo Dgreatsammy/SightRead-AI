@@ -594,12 +594,46 @@ export interface PlaybackEngineOptions {
 
 export const DEFAULT_LOOKAHEAD_SECONDS = 0.15;
 
+/** Identifies this timing code, so a diagnostics readout shows which build is live. */
+export const PLAYBACK_ENGINE_VERSION = "timing-v2";
+
+/**
+ * Measurements taken while playing, to find out why music skips on a given
+ * device. "Stall" = the audio timer ran more than 150 ms late (the page was
+ * frozen); "late note" = a note could not be handed to the audio clock in
+ * time and started after it was due.
+ */
+export interface PlaybackDiagnostics {
+  engine: string;
+  contextState: string;
+  sampleRate: number | null;
+  baseLatencyMs: number | null;
+  outputLatencyMs: number | null;
+  ticks: number;
+  maxTickGapMs: number;
+  slowTicks: number; // gap over 60 ms
+  stalls: number; // gap over 150 ms
+  notesPlayed: number;
+  lateNotes: number; // started more than 30 ms after they were due
+  worstLateMs: number;
+}
+
 export class MusicalPlaybackEngine {
   private readonly onProgress: (snapshot: PlaybackSnapshot) => void;
   private readonly clock: () => number;
   private readonly lookaheadSeconds: number;
   private readonly reportIntervalMs: number;
   private lastReportAt = Number.NEGATIVE_INFINITY;
+  private lastTickAt: number | null = null;
+  private diag = {
+    ticks: 0,
+    maxTickGapMs: 0,
+    slowTicks: 0,
+    stalls: 0,
+    notesPlayed: 0,
+    lateNotes: 0,
+    worstLateMs: 0,
+  };
   private score: PlaybackScore | null = null;
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -755,6 +789,7 @@ export class MusicalPlaybackEngine {
     if (this.awaitingCountIn && this.countInBars > 0) this.startCountIn();
     this.state = this.isCountingIn() ? "counting-in" : "playing";
     this.lastWallTime = this.clock();
+    this.lastTickAt = null;
     if (this.timer === null)
       this.timer = window.setInterval(() => this.tick(), 20);
     this.report();
@@ -809,6 +844,14 @@ export class MusicalPlaybackEngine {
     )
       return;
     const now = this.clock();
+    if (this.lastTickAt !== null) {
+      const gap = now - this.lastTickAt;
+      this.diag.ticks += 1;
+      this.diag.maxTickGapMs = Math.max(this.diag.maxTickGapMs, gap);
+      if (gap > 60) this.diag.slowTicks += 1;
+      if (gap > 150) this.diag.stalls += 1;
+    }
+    this.lastTickAt = now;
     const deltaBeats =
       Math.max(0, (now - this.lastWallTime) / 1000) *
       (this.tempo / 60) *
@@ -893,6 +936,17 @@ export class MusicalPlaybackEngine {
     const frequency = midiToFrequency(note.midi);
     // Scheduled on the audio clock: `now` is the moment the note must start.
     const now = this.context.currentTime + delay;
+    this.diag.notesPlayed += 1;
+    if (delay === 0 && this.positionBeat > note.startBeat) {
+      const lateMs =
+        beatsToSeconds(
+          this.positionBeat - note.startBeat,
+          this.tempo,
+          this.playbackSpeed,
+        ) * 1000;
+      if (lateMs > 30) this.diag.lateNotes += 1;
+      this.diag.worstLateMs = Math.max(this.diag.worstLateMs, lateMs);
+    }
     const elapsedBeats = Math.max(0, this.positionBeat - note.startBeat);
     const remainingBeats = Math.max(0.06, note.durationBeats - elapsedBeats);
     const duration = Math.max(
@@ -1104,6 +1158,41 @@ export class MusicalPlaybackEngine {
       if (measure.startBeat <= positionBeat) current = measure;
     });
     return current;
+  }
+
+  getDiagnostics(): PlaybackDiagnostics {
+    const context = this.context as
+      | (AudioContext & { baseLatency?: number; outputLatency?: number })
+      | null;
+    const ms = (seconds: number | undefined) =>
+      typeof seconds === "number" ? Math.round(seconds * 1000) : null;
+    return {
+      engine: PLAYBACK_ENGINE_VERSION,
+      contextState: context?.state ?? "not started",
+      sampleRate: context?.sampleRate ?? null,
+      baseLatencyMs: ms(context?.baseLatency),
+      outputLatencyMs: ms(context?.outputLatency),
+      ticks: this.diag.ticks,
+      maxTickGapMs: Math.round(this.diag.maxTickGapMs),
+      slowTicks: this.diag.slowTicks,
+      stalls: this.diag.stalls,
+      notesPlayed: this.diag.notesPlayed,
+      lateNotes: this.diag.lateNotes,
+      worstLateMs: Math.round(this.diag.worstLateMs),
+    };
+  }
+
+  resetDiagnostics() {
+    this.diag = {
+      ticks: 0,
+      maxTickGapMs: 0,
+      slowTicks: 0,
+      stalls: 0,
+      notesPlayed: 0,
+      lateNotes: 0,
+      worstLateMs: 0,
+    };
+    this.lastTickAt = null;
   }
 
   /** Progress updates for the screen, limited to reportIntervalMs. */

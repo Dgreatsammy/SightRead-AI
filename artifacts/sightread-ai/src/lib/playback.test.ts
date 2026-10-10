@@ -7,6 +7,7 @@ import {
   parseMusicXml,
   type PlaybackSnapshot,
   type PlaybackEngineOptions,
+  PLAYBACK_ENGINE_VERSION,
 } from "./playback";
 
 type NoteOptions = {
@@ -738,5 +739,69 @@ describe("playback timing on a busy device", () => {
     const loopCounts = new Set(snapshots.map((s) => s.loopCount));
     expect(loopCounts.has(1)).toBe(true);
     expect(loopCounts.has(2)).toBe(true);
+  });
+});
+
+
+describe("playback diagnostics", () => {
+  const restThenNote = () =>
+    parseMusicXml(
+      scoreXml(
+        measure(
+          1,
+          `${note({ rest: true, duration: 1 })}${note({ duration: 1 })}`,
+          oneFour,
+        ),
+      ),
+    );
+
+  it("reports a smooth run as having no freezes and no late notes", async () => {
+    const { engine } = createEngine(restThenNote());
+    engine.setTempo(60);
+    engine.play();
+    await advance(1500);
+    const d = engine.getDiagnostics();
+    expect(d.engine).toBe(PLAYBACK_ENGINE_VERSION);
+    expect(d.ticks).toBeGreaterThan(50);
+    expect(d.stalls).toBe(0);
+    expect(d.lateNotes).toBe(0);
+    expect(d.notesPlayed).toBe(1);
+    expect(d.maxTickGapMs).toBeLessThanOrEqual(40);
+  });
+
+  it("counts a 380 ms freeze as a stall and the longest gap", async () => {
+    const { engine } = createEngine(restThenNote());
+    engine.setTempo(60);
+    engine.play();
+    await advance(300);
+    currentClock += 380;
+    await vi.advanceTimersByTimeAsync(20);
+    const d = engine.getDiagnostics();
+    expect(d.stalls).toBe(1);
+    expect(d.maxTickGapMs).toBeGreaterThanOrEqual(380);
+  });
+
+  it("counts a note that could not be scheduled in time as late", async () => {
+    const { engine } = createEngine(restThenNote(), { lookaheadSeconds: 0 });
+    engine.setTempo(60);
+    engine.play();
+    await advance(880);
+    currentClock += 380;
+    await vi.advanceTimersByTimeAsync(20);
+    const d = engine.getDiagnostics();
+    expect(d.lateNotes).toBe(1);
+    expect(d.worstLateMs).toBeGreaterThan(150);
+  });
+
+  it("resets the measurements", async () => {
+    const { engine } = createEngine(restThenNote());
+    engine.setTempo(60);
+    engine.play();
+    await advance(300);
+    currentClock += 380;
+    await vi.advanceTimersByTimeAsync(20);
+    expect(engine.getDiagnostics().stalls).toBe(1);
+    engine.resetDiagnostics();
+    expect(engine.getDiagnostics()).toMatchObject({ ticks: 0, stalls: 0, notesPlayed: 0 });
   });
 });

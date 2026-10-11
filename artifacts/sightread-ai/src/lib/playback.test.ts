@@ -610,7 +610,8 @@ describe("measure lengths in playback", () => {
     expect(parsed.measures.map((m) => m.durationBeats)).toEqual([4, 4, 4]);
   });
 
-  it("fills a missing beat once when two short bars add up to less than a bar", () => {
+  it("puts a missing rest at the end of the FIRST of two short bars, before the pickup", () => {
+    // phrase end (2 beats), [unread rest: 1 beat], pickup note (1 beat)
     const parsed = parseMusicXml(
       scoreXml(
         measure(1, q(4), withDivisions) +
@@ -619,8 +620,8 @@ describe("measure lengths in playback", () => {
           measure(4, q(4)),
       ),
     );
-    expect(parsed.measures.map((m) => m.durationBeats)).toEqual([4, 2, 2, 4]);
-    expect(parsed.measures[3].startBeat).toBe(8);
+    expect(parsed.measures.map((m) => m.durationBeats)).toEqual([4, 3, 1, 4]);
+    expect(parsed.measures.map((m) => m.startBeat)).toEqual([0, 4, 7, 8]);
   });
 
   it("keeps two parts in step even when only one of them is short", () => {

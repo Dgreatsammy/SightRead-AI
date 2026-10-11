@@ -132,7 +132,7 @@ export function beatsToSeconds(beats: number, tempo: number, speed = 1) {
  * is. Recorded per parsed part so measure lengths can be resolved across ALL
  * parts together (they must stay in step with one another).
  */
-interface MeasureProbe {
+export interface MeasureProbe {
   content: number[];
   bar: number[];
 }
@@ -151,13 +151,15 @@ function approxEqual(a: number, b: number) {
  * creates silent holds with no visible rest:
  *   - a pickup (anacrusis): a short FIRST measure followed by more music
  *   - a bar split across a line break, written as two short measures whose
- *     lengths add up to one bar or less (any missing beat becomes a single
- *     short silence instead of two long pauses)
+ *     lengths add up to one bar or less. Any missing beat is a rest the
+ *     recogniser did not read, and it belongs at the END OF THE FIRST part
+ *     (the usual shape is: last note of a phrase, rest, pickup note of the
+ *     next phrase), so the first measure absorbs it
  *   - a short LAST measure that completes the pickup
  * Lengths are taken as the longest content among all parts, so parts that
  * disagree about a measure still start every measure together.
  */
-function resolveMeasureDurations(probes: MeasureProbe[]): number[] {
+export function resolveMeasureDurations(probes: MeasureProbe[]): number[] {
   const count = Math.max(0, ...probes.map((probe) => probe.content.length));
   const shared = Array.from({ length: count }, (_, index) =>
     Math.max(0, ...probes.map((probe) => probe.content[index] ?? 0)),
@@ -186,10 +188,11 @@ function resolveMeasureDurations(probes: MeasureProbe[]): number[] {
       content + shared[index + 1] <= bar[index] + 0.01
     ) {
       // One bar written as two short measures (e.g. across a line break).
-      // If a beat or two is missing (an unread rest), it is lost once, as a
-      // short silence at the end, rather than as two long pauses.
-      result[index] = content;
-      result[index + 1] = bar[index] - content;
+      // If a beat or two is missing it is almost always a rest between the
+      // end of one phrase and the pickup of the next, so the FIRST measure
+      // gets the silence and the second keeps only its own notes.
+      result[index] = bar[index] - shared[index + 1];
+      result[index + 1] = shared[index + 1];
       index += 2;
     } else if (
       isShort(index) &&

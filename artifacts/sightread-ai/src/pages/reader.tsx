@@ -30,6 +30,7 @@ import {
   type PlaybackSnapshot,
   type PlaybackState,
 } from "@/lib/playback";
+import { fillMissingRests } from "@/lib/restFill";
 import {
   isPlaybackDebugRequested,
   PlaybackDiagnosticsPanel,
@@ -361,11 +362,25 @@ export default function Reader() {
         darkMode: false,
         followCursor: true,
       });
-      await osmd.load(source);
-
-      if (requestId !== renderRequestRef.current) return;
-
-      osmd.render();
+      // The drawn sheet also shows rests the recogniser missed, so a pause you
+      // hear always has a rest symbol. If the viewer cannot draw that version
+      // for any reason, fall back to the score exactly as recognised.
+      let drawn = source;
+      try {
+        drawn = fillMissingRests(source);
+      } catch {
+        drawn = source;
+      }
+      try {
+        await osmd.load(drawn);
+        if (requestId !== renderRequestRef.current) return;
+        osmd.render();
+      } catch (drawError) {
+        if (drawn === source) throw drawError;
+        await osmd.load(source);
+        if (requestId !== renderRequestRef.current) return;
+        osmd.render();
+      }
       setScoreStatus("ready");
     } catch (error) {
       if (requestId !== renderRequestRef.current) return;

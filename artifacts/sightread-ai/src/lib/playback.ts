@@ -595,7 +595,10 @@ export interface PlaybackEngineOptions {
   reportIntervalMs?: number;
 }
 
-export const DEFAULT_LOOKAHEAD_SECONDS = 0.15;
+// 0.4 s rides out the short freezes that scrolling a large score can cause.
+// Pause, stop and seek still cancel everything already handed to the audio
+// clock, so a longer head start does not make the controls feel slower.
+export const DEFAULT_LOOKAHEAD_SECONDS = 0.4;
 
 /** Identifies this timing code, so a diagnostics readout shows which build is live. */
 export const PLAYBACK_ENGINE_VERSION = "timing-v2";

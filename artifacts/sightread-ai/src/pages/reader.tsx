@@ -31,6 +31,7 @@ import {
   type PlaybackState,
 } from "@/lib/playback";
 import { fillMissingRests } from "@/lib/restFill";
+import { hasMeaningfulPartNames } from "@/lib/scoreLabels";
 import {
   isPlaybackDebugRequested,
   PlaybackDiagnosticsPanel,
@@ -358,6 +359,10 @@ export default function Reader() {
         drawTitle: true,
         drawSubtitle: true,
         drawComposer: true,
+        // Only show text that is really on the page: no invented "Voice"
+        // labels and no bar numbers the original does not have.
+        drawPartNames: hasMeaningfulPartNames(source),
+        drawMeasureNumbers: false,
         pageFormat: "Endless",
         darkMode: false,
         followCursor: true,

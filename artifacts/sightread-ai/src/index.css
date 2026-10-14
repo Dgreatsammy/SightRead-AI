@@ -129,6 +129,9 @@ button { cursor: pointer; }
 .paper-grain {
   position: relative;
 }
+/* A faint paper texture. It must stay cheap: a full-screen overlay with a blend
+   mode (mix-blend-mode) makes the browser re-blend the whole page, score
+   included, on every scroll frame, which made playback skip while scrolling. */
 .paper-grain::after {
   content: '';
   pointer-events: none;
@@ -137,7 +140,6 @@ button { cursor: pointer; }
   z-index: 20;
   opacity: .035;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.75'/%3E%3C/svg%3E");
-  mix-blend-mode: multiply;
 }
 .score-shell {
   box-shadow: 0 20px 50px rgba(31, 42, 53, .14), 0 2px 4px rgba(31, 42, 53, .08);

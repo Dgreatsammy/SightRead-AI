@@ -20,3 +20,54 @@ describe("assessImageResolution", () => {
     expect(assessImageResolution(NaN, 100)).toBeNull();
   });
 });
+
+import {
+  assessPdfPages,
+  estimatePdfPageCount,
+  MAX_PAGES_READ,
+  omrWaitMessage,
+} from "./uploadQuality";
+
+const bytes = (text: string) => new TextEncoder().encode(text);
+
+describe("estimatePdfPageCount", () => {
+  it("reads the page total from the page tree", () => {
+    expect(estimatePdfPageCount(bytes("<< /Type /Pages /Kids [1 0 R] /Count 23 >>"))).toBe(23);
+    expect(estimatePdfPageCount(bytes("<< /Count 7 /Kids [1 0 R] /Type /Pages >>"))).toBe(7);
+  });
+  it("falls back to counting page objects", () => {
+    expect(
+      estimatePdfPageCount(bytes("<< /Type /Page /A 1 >> << /Type /Page /B 2 >> << /Type /Pages >>")),
+    ).toBe(2);
+  });
+  it("returns null when it cannot tell", () => {
+    expect(estimatePdfPageCount(bytes("not a pdf"))).toBeNull();
+  });
+  it("copes with a large file", () => {
+    const big = new Uint8Array(3_000_000).fill(65);
+    expect(estimatePdfPageCount(big)).toBeNull();
+  });
+});
+
+describe("assessPdfPages", () => {
+  it("is quiet for a short PDF or an unknown count", () => {
+    expect(assessPdfPages(MAX_PAGES_READ)).toBeNull();
+    expect(assessPdfPages(1)).toBeNull();
+    expect(assessPdfPages(null)).toBeNull();
+  });
+  it("warns for a long PDF and says what will happen", () => {
+    const text = assessPdfPages(23);
+    expect(text).toContain("about 23 pages");
+    expect(text).toContain(`first ${MAX_PAGES_READ}`);
+  });
+});
+
+describe("omrWaitMessage", () => {
+  it("is honest that a long wait may not finish", () => {
+    expect(omrWaitMessage(5)).toContain("Converting");
+    expect(omrWaitMessage(60)).toContain("few minutes");
+    expect(omrWaitMessage(120)).toContain("2m 00s");
+    expect(omrWaitMessage(200)).toContain("may not finish");
+    expect(omrWaitMessage(200)).not.toContain("normal, not stuck");
+  });
+});

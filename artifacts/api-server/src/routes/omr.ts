@@ -9,6 +9,14 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { extractMusicXmlFromMxl } from "../lib/mxl.js";
 import { sanitizeAudiverisMusicXml } from "../lib/sanitizeAudiverisMusicXml.js";
+import {
+  DEFAULT_OMR_MAX_PAGES,
+  DEFAULT_OMR_TIMEOUT_MS,
+  isTimeoutError,
+  pageRange,
+  readPositiveInt,
+  timeoutMessage,
+} from "../lib/omrLimits";
 
 const router: IRouter = Router();
 
@@ -42,6 +50,24 @@ const AUDIVERIS_TESSDATA_PREFIX =
 // (e.g. Railway's dashboard) if the default sizing ever proves too
 // aggressive or too conservative for this workload. Example: "1536m".
 const AUDIVERIS_JAVA_MAX_HEAP = process.env["AUDIVERIS_JAVA_MAX_HEAP"];
+// Reading a page takes about a minute, so long scores are cut off rather than
+// left running: see lib/omrLimits.ts.
+const OMR_TIMEOUT_MS = readPositiveInt(
+  process.env["AUDIVERIS_TIMEOUT_MS"],
+  DEFAULT_OMR_TIMEOUT_MS,
+);
+const OMR_MAX_PAGES = readPositiveInt(
+  process.env["AUDIVERIS_MAX_PAGES"],
+  DEFAULT_OMR_MAX_PAGES,
+);
+
+class OmrRequestError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 router.post(
   "/omr",
@@ -108,6 +134,8 @@ router.post(
             classpath,
             "org.audiveris.omr.Main",
             "-batch",
+            "-sheets",
+            pageRange(OMR_MAX_PAGES),
             "-transcribe",
             "-export",
             "-output",
@@ -116,6 +144,8 @@ router.post(
           ],
           {
             maxBuffer: 10 * 1024 * 1024,
+            timeout: OMR_TIMEOUT_MS,
+            killSignal: "SIGKILL",
             env: {
               ...process.env,
               JAVA_HOME: audiverisRuntime,
@@ -134,6 +164,12 @@ router.post(
           },
         );
       } catch (error) {
+        if (isTimeoutError(error)) {
+          throw new OmrRequestError(
+            timeoutMessage(OMR_TIMEOUT_MS, OMR_MAX_PAGES),
+            504,
+          );
+        }
         throw new Error(formatAudiverisFailure(error));
       }
 
@@ -182,7 +218,7 @@ router.post(
       const message =
         error instanceof Error ? error.message : "OMR processing failed.";
 
-      res.status(500).json({
+      res.status(error instanceof OmrRequestError ? error.status : 500).json({
         error: message,
       });
     } finally {

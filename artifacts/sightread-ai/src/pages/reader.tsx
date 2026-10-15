@@ -20,7 +20,14 @@ import {
   VolumeX,
 } from "lucide-react";
 import { Link } from "wouter";
-import { assessImageResolution, readImageSize } from "@/lib/uploadQuality";
+import {
+  assessImageResolution,
+  assessPdfPages,
+  estimatePdfPageCount,
+  OMR_WAIT_LIMIT_SECONDS,
+  omrWaitMessage,
+  readImageSize,
+} from "@/lib/uploadQuality";
 import { demoMusicXml, isMusicXml } from "@/lib/musicxml";
 import {
   CountInBars,
@@ -154,6 +161,8 @@ export default function Reader() {
   const [viewMode, setViewMode] = useState<"score" | "original">("score");
   const [qualityWarning, setQualityWarning] = useState("");
   const importSeqRef = useRef(0);
+  // Lets the person (or the time limit) stop a score that is taking too long.
+  const omrAbortRef = useRef<{ controller: AbortController; reason: "user" | "timeout" | null } | null>(null);
   const [scoreStatus, setScoreStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -491,13 +500,50 @@ export default function Reader() {
         });
       }
 
+      if (isPdf) {
+        void file
+          .arrayBuffer()
+          .then((buffer) => {
+            if (importId !== importSeqRef.current) return;
+            setQualityWarning(
+              assessPdfPages(estimatePdfPageCount(new Uint8Array(buffer))) ?? "",
+            );
+          })
+          .catch(() => {});
+      }
+
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await fetch("/api/omr", {
-        method: "POST",
-        body: formData,
-      });
+      const controller = new AbortController();
+      const abortState = { controller, reason: null as "user" | "timeout" | null };
+      omrAbortRef.current = abortState;
+      const timeoutId = window.setTimeout(() => {
+        abortState.reason = "timeout";
+        controller.abort();
+      }, OMR_WAIT_LIMIT_SECONDS * 1000);
+
+      let response: Response;
+      try {
+        response = await fetch("/api/omr", {
+          method: "POST",
+          body: formData,
+          signal: controller.signal,
+        });
+      } catch (fetchError) {
+        if (abortState.reason === "timeout") {
+          throw new Error(
+            "Reading this score took too long, so it was stopped. Long or many-page scores can't be read yet. Try just the page or pages you want to practise (one or two works best), or a clean PDF or MusicXML file.",
+          );
+        }
+        if (abortState.reason === "user") {
+          throw new Error("Cancelled. Choose another file, or try just one or two pages.");
+        }
+        throw fetchError;
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (omrAbortRef.current === abortState) omrAbortRef.current = null;
+      }
 
       const data = (await response.json()) as {
         success?: boolean;
@@ -699,13 +745,25 @@ export default function Reader() {
                     data-testid="status-score-detail"
                   >
                     {isOmrImport
-                      ? omrElapsedSeconds < 20
-                        ? "Converting your scanned page into notes."
-                        : omrElapsedSeconds < 90
-                          ? "Still working — this step can take a few minutes, especially for photos or larger pages."
-                          : `Still working (${Math.floor(omrElapsedSeconds / 60)}m ${String(omrElapsedSeconds % 60).padStart(2, "0")}s). Scanned scores can take several minutes on limited hardware — this is normal, not stuck.`
+                      ? omrWaitMessage(omrElapsedSeconds)
                       : "Rendering your score for reading."}
                   </p>
+                  {isOmrImport && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const active = omrAbortRef.current;
+                        if (active) {
+                          active.reason = "user";
+                          active.controller.abort();
+                        }
+                      }}
+                      className="mt-5 rounded-full border border-[#cec3b5] px-5 py-2 font-mono text-[10px] uppercase tracking-[.13em] text-[#1d3045] hover:bg-[#f2ece2]"
+                      data-testid="button-cancel-omr"
+                    >
+                      Cancel
+                    </button>
+                  )}
                 </div>
               )}
               {scoreStatus === "error" && (

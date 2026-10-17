@@ -28,6 +28,11 @@ export interface ScoreSummary {
   firstMeasureBeats: number | null;
   events: AccuracyEvent[];
   lyricWords: string[];
+  /** Verse-1 text as bare lower-case letters (no spaces, hyphens, digits). */
+  verse1Letters: string;
+  verseCount: number;
+  /** Lyric text that looks like a page footer, URL or copyright line. */
+  junkLyrics: string[];
   dynamics: number;
   trills: number;
 }
@@ -39,7 +44,7 @@ function kids(parent: Element): Element[] {
 }
 const kid = (parent: Element, tag: string) => kids(parent).find((e) => e.tagName === tag);
 
-type RawNote = { start: number; dur: number; midi: number | null; lyric?: { text: string; syllabic: string } };
+type RawNote = { start: number; dur: number; midi: number | null; lyric?: { text: string; syllabic: string }; extraLyrics?: Array<{ verse: string; text: string }> };
 
 function readPart(part: Element) {
   const measures: Array<{ notes: RawNote[]; content: number; divisions: number }> = [];
@@ -93,14 +98,14 @@ function readPart(part: Element) {
         if (step !== undefined && Number.isFinite(octave)) midi = (octave + 1) * 12 + step + alter;
       }
       const note: RawNote = { start, dur: d, midi };
-      const lyric = kids(child).find(
-        (e) => e.tagName === "lyric" && (!e.getAttribute("number") || e.getAttribute("number") === "1"),
-      );
-      if (lyric) {
+      for (const lyric of kids(child).filter((e) => e.tagName === "lyric")) {
         const text = kid(lyric, "text")?.textContent ?? "";
-        if (text.trim()) {
+        if (!text.trim()) continue;
+        const verse = lyric.getAttribute("number") || "1";
+        lyricCount++;
+        (note.extraLyrics ??= []).push({ verse, text });
+        if (verse === "1" && !note.lyric) {
           note.lyric = { text, syllabic: kid(lyric, "syllabic")?.textContent?.trim() ?? "single" };
-          lyricCount++;
         }
       }
       notes.push(note);
@@ -118,6 +123,10 @@ export function normaliseWord(word: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 }
+
+/** Page furniture that is not sung: URLs, e-mail, copyright and engraving credits. */
+export const LOOKS_LIKE_JUNK =
+  /(https?:|www\.|@|lilypond|cpdl|copyright|[\u00a9\u2117\u00ae]|\bedition\b|engraving|freely|distributed|duplicated|\bproduced by\b)/i;
 
 export function summariseScore(xml: string): ScoreSummary {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
@@ -173,6 +182,31 @@ export function summariseScore(xml: string): ScoreSummary {
     if (tail) words.push(tail);
   }
 
+  const lettersOnly = (text: string) =>
+    text
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z]/g, "");
+  const junkLyrics: string[] = [];
+  const verses = new Set<string>();
+  let verse1Letters = "";
+  // Junk can sit on notes in ANY staff, so every part is checked for it; the
+  // verse-1 spelling text comes from the one part that carries the lyrics.
+  for (const part of parts) {
+    for (const m of part.measures) {
+      for (const n of m.notes) {
+        for (const l of n.extraLyrics ?? []) {
+          if (LOOKS_LIKE_JUNK.test(l.text)) junkLyrics.push(l.text.trim());
+          else if (part === lyricPart) verses.add(l.verse);
+          if (part === lyricPart && l.verse === "1" && !LOOKS_LIKE_JUNK.test(l.text)) {
+            verse1Letters += lettersOnly(l.text);
+          }
+        }
+      }
+    }
+  }
+
   const first = parts[0];
   return {
     parts: parts.length,
@@ -183,6 +217,9 @@ export function summariseScore(xml: string): ScoreSummary {
     firstMeasureBeats: first?.measures[0] ? first.measures[0].content : null,
     events,
     lyricWords: words,
+    verse1Letters,
+    verseCount: verses.size,
+    junkLyrics,
     dynamics: doc.getElementsByTagName("dynamics").length,
     trills: doc.getElementsByTagName("trill-mark").length,
   };
@@ -255,7 +292,12 @@ export interface AccuracyReport {
   extraGroups: number;
   trueGroups: number;
   lyricWordAccuracy: number | null;
+  /** Spelling quality of verse 1, letter by letter (ignores hyphens and word splits). */
+  lyricLetterAccuracy: number | null;
   lyricMistakes: Array<{ truth: string; recognised: string }>;
+  /** Page footers, URLs or credits that were read as sung words. */
+  junkLyrics: string[];
+  verses: { truth: number; recognised: number };
   structure: {
     key: { truth: number | null; recognised: number | null; ok: boolean };
     timeSignature: { truth: string | null; recognised: string | null; ok: boolean };
@@ -303,6 +345,12 @@ export function compareScores(truthXml: string, recognisedXml: string): Accuracy
     if (lyricMistakes.length < 12) lyricMistakes.push({ truth: truth.lyricWords[i], recognised: "(missing)" });
   }
 
+  const letters = align(
+    [...truth.verse1Letters],
+    [...rec.verse1Letters],
+    (a: string, b: string) => (a === b ? 0 : 1),
+  );
+
   return {
     chordAccuracy: pct(chordAccuracy),
     melodyAccuracy: pct(truth.events.length ? 1 - melody.cost / truth.events.length : 1),
@@ -314,7 +362,12 @@ export function compareScores(truthXml: string, recognisedXml: string): Accuracy
     lyricWordAccuracy: truth.lyricWords.length
       ? pct(1 - words.cost / truth.lyricWords.length)
       : null,
+    lyricLetterAccuracy: truth.verse1Letters.length
+      ? pct(1 - letters.cost / truth.verse1Letters.length)
+      : null,
     lyricMistakes,
+    junkLyrics: rec.junkLyrics.filter((j) => !truth.junkLyrics.includes(j)),
+    verses: { truth: truth.verseCount, recognised: rec.verseCount },
     structure: {
       key: {
         truth: truth.keyFifths,
@@ -343,9 +396,12 @@ export function formatAccuracyReport(name: string, r: AccuracyReport): string {
     `Melody (top line):  ${r.melodyAccuracy}% right`,
     `Bass (bottom line): ${r.bassAccuracy}% right`,
     `Rhythm (melody note lengths): ${r.rhythmAccuracy}% right`,
-    r.lyricWordAccuracy === null
+    r.lyricLetterAccuracy === null
       ? "Words: no words in the true score"
-      : `Words: ${r.lyricWordAccuracy}% of words right`,
+      : `Words (verse 1, letter by letter): ${r.lyricLetterAccuracy}% right;  whole words: ${r.lyricWordAccuracy}% right;  verses: true ${r.verses.truth} / read ${r.verses.recognised}`,
+    r.junkLyrics.length
+      ? `Footer or credit text read as lyrics: ${r.junkLyrics.length} (${r.junkLyrics.slice(0, 4).join(" | ")})`
+      : "Footer or credit text read as lyrics: none",
     `Key: true ${r.structure.key.truth} / read ${r.structure.key.recognised} ${r.structure.key.ok ? "(ok)" : "(WRONG)"}`,
     `Time signature: true ${r.structure.timeSignature.truth} / read ${r.structure.timeSignature.recognised} ${r.structure.timeSignature.ok ? "(ok)" : "(WRONG)"}`,
     `Bars: true ${r.structure.measures.truth} / read ${r.structure.measures.recognised};  length in beats: true ${r.structure.totalBeats.truth} / read ${r.structure.totalBeats.recognised}`,

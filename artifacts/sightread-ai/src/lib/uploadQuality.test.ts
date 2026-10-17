@@ -2,10 +2,22 @@ import { describe, expect, it } from "vitest";
 import { assessImageResolution } from "./uploadQuality";
 
 describe("assessImageResolution", () => {
-  it("warns on a small image and reports its size", () => {
+  it("warns strongly on a very small image and reports its size", () => {
     const msg = assessImageResolution(850, 1100);
-    expect(msg).toContain("850 × 1100");
+    expect(msg).toContain("very small");
+    expect(msg).toContain("850 \u00d7 1100");
     expect(msg).toContain("PDF");
+    expect(msg).toContain("Document");
+  });
+  it("warns gently on a middle-sized image: notes mostly fine, words at risk", () => {
+    const msg = assessImageResolution(1236, 1600);
+    expect(msg).toContain("smaller than ideal");
+    expect(msg).toContain("lyrics");
+    expect(msg).not.toContain("very small");
+  });
+  it("switches wording at the poor-quality boundary", () => {
+    expect(assessImageResolution(1199, 900)).toContain("very small");
+    expect(assessImageResolution(1200, 900)).toContain("smaller than ideal");
   });
   it("is silent for a full-resolution scan", () => {
     expect(assessImageResolution(2550, 3300)).toBeNull();

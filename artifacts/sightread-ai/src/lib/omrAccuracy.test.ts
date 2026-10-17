@@ -36,7 +36,7 @@ const truth = score([soprano(), alto()]);
 describe("compareScores", () => {
   it("scores 100% when the recognised score matches", () => {
     const r = compareScores(truth, truth);
-    expect(r).toMatchObject({ chordAccuracy: 100, melodyAccuracy: 100, bassAccuracy: 100, rhythmAccuracy: 100, missedGroups: 0, extraGroups: 0, lyricWordAccuracy: 100 });
+    expect(r).toMatchObject({ chordAccuracy: 100, melodyAccuracy: 100, bassAccuracy: 100, rhythmAccuracy: 100, missedGroups: 0, extraGroups: 0, lyricWordAccuracy: 100, lyricLetterAccuracy: 100 });
   });
 
   it("does not care how the parts are organised (two parts vs stacked chords)", () => {
@@ -102,6 +102,54 @@ describe("compareScores", () => {
   });
 });
 
+describe("lyrics: letters, verses and page footers", () => {
+  const withLyrics = (words: Array<[string, string]>, verse = "1") =>
+    score([
+      m(1, words.map(([text, syl]) => n("C", 4, 1, { lyric: [text, syl] }).replace('<lyric number="1">', `<lyric number="${verse}">`)).join(""), attrs()),
+    ]);
+
+  it("measures spelling letter by letter, so splitting a word differently does not count against it", () => {
+    const truthLyrics = withLyrics([["mer", "begin"], ["ri", "middle"], ["ly", "end"], ["on", "single"]]);
+    const readLyrics = withLyrics([["merri", "begin"], ["ly", "end"], ["on", "single"], ["", "single"]]);
+    expect(compareScores(truthLyrics, readLyrics).lyricLetterAccuracy).toBe(100);
+  });
+
+  it("scores a misspelt word", () => {
+    const a = withLyrics([["sky", "single"], ["looked", "single"]]);
+    const b = withLyrics([["siy", "single"], ["looked", "single"]]);
+    expect(compareScores(a, b).lyricLetterAccuracy).toBeCloseTo(88.9, 1);
+  });
+
+  it("reports footer and credit text that was read as lyrics", () => {
+    const clean = withLyrics([["God", "single"], ["rest", "single"]]);
+    const junky = withLyrics([
+      ["God", "single"], ["rest", "single"],
+      ["edition", "single"], ["klaus@foehl.net", "single"], ["CPDL", "single"],
+    ]);
+    const r = compareScores(clean, junky);
+    expect(r.junkLyrics).toEqual(["edition", "klaus@foehl.net", "CPDL"]);
+    expect(r.lyricLetterAccuracy).toBe(100); // the footer is kept out of the spelling score
+  });
+
+  it("finds footer text attached to notes in a different staff than the main lyrics", () => {
+    const lyricsStaff = m(1, n("C", 4, 1, { lyric: ["God", "single"] }) + n("D", 4, 1, { lyric: ["rest", "single"] }), attrs());
+    const otherStaff = m(1, n("C", 3, 1, { lyric: ["CPDL", "single"] }) + n("D", 3, 1), attrs());
+    const clean = score([lyricsStaff]);
+    const junky = score([lyricsStaff, otherStaff]);
+    expect(compareScores(clean, junky).junkLyrics).toEqual(["CPDL"]);
+  });
+
+  it("does not blame the recogniser for footer text that is in the true score too", () => {
+    const both = withLyrics([["God", "single"], ["CPDL", "single"]]);
+    expect(compareScores(both, both).junkLyrics).toEqual([]);
+  });
+
+  it("counts verses", () => {
+    const one = withLyrics([["God", "single"]]);
+    expect(compareScores(one, one).verses).toEqual({ truth: 1, recognised: 1 });
+  });
+});
+
 describe("helpers", () => {
   it("folds accents and punctuation in words", () => {
     expect(normaliseWord("Bless\u00e8d,")).toBe("blessed");
@@ -118,5 +166,6 @@ describe("helpers", () => {
     const text = formatAccuracyReport("Test piece", compareScores(truth, truth));
     expect(text).toContain("## Test piece");
     expect(text).toContain("Bass (bottom line): 100% right");
+    expect(text).toContain("letter by letter");
   });
 });

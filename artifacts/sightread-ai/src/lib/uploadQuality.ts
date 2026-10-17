@@ -5,6 +5,8 @@
  * garbled lyrics. This only ever produces a warning - it never blocks an upload.
  */
 export const MIN_RECOMMENDED_LONG_SIDE = 2000;
+/** Below this, benchmark pages lost roughly a quarter of their notes and most of their words. */
+export const POOR_LONG_SIDE = 1200;
 
 export function assessImageResolution(
   width: number,
@@ -14,11 +16,19 @@ export function assessImageResolution(
   if (width <= 0 || height <= 0) return null;
   const longSide = Math.max(width, height);
   if (longSide >= MIN_RECOMMENDED_LONG_SIDE) return null;
+  const size = `${Math.round(width)} \u00d7 ${Math.round(height)} px`;
+  if (longSide < POOR_LONG_SIDE) {
+    return (
+      `This image is very small (${size}). Pages this small are often read with many wrong ` +
+      `notes and most of the words wrong. For a good result, upload the PDF, or a scan or ` +
+      `photo at least ${MIN_RECOMMENDED_LONG_SIDE} px on its long side. If it came through ` +
+      `WhatsApp, ask for it to be sent as a Document so it is not shrunk.`
+    );
+  }
   return (
-    `This image is small (${Math.round(width)} × ${Math.round(height)} px), ` +
-    `so notes, rests and words may be read wrongly. For the best result, ` +
-    `upload the PDF, or a scan or photo at least ${MIN_RECOMMENDED_LONG_SIDE} px ` +
-    `on its long side (about 300 dpi for a full page).`
+    `This image is smaller than ideal (${size}). The notes are usually mostly right at this ` +
+    `size, but the words (lyrics) are often misread. For the best result, upload the PDF, or a ` +
+    `scan or photo at least ${MIN_RECOMMENDED_LONG_SIDE} px on its long side.`
   );
 }
 

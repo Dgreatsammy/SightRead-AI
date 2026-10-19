@@ -37,6 +37,7 @@ import {
   type PlaybackSnapshot,
   type PlaybackState,
 } from "@/lib/playback";
+import { checkLyricVerses, removeFooterLyrics } from "@/lib/lyricCleanup";
 import { fillMissingRests } from "@/lib/restFill";
 import { hasMeaningfulPartNames } from "@/lib/scoreLabels";
 import {
@@ -160,6 +161,8 @@ export default function Reader() {
   } | null>(null);
   const [viewMode, setViewMode] = useState<"score" | "original">("score");
   const [qualityWarning, setQualityWarning] = useState("");
+  // Shown after reading a scan when a verse looks incomplete or misplaced.
+  const [lyricNotice, setLyricNotice] = useState("");
   const importSeqRef = useRef(0);
   // Lets the person (or the time limit) stop a score that is taking too long.
   const omrAbortRef = useRef<{ controller: AbortController; reason: "user" | "timeout" | null } | null>(null);
@@ -381,7 +384,9 @@ export default function Reader() {
       // for any reason, fall back to the score exactly as recognised.
       let drawn = source;
       try {
-        drawn = fillMissingRests(source);
+        // Footer text (credits, web addresses) that was read as sung words is
+        // removed from the drawn sheet; then unread rests are drawn in.
+        drawn = fillMissingRests(removeFooterLyrics(source).xml);
       } catch {
         drawn = source;
       }
@@ -462,6 +467,7 @@ export default function Reader() {
         setOriginal(null);
         setViewMode("score");
         setQualityWarning("");
+        setLyricNotice("");
         setXml(content);
         setCurrentMeasure(1);
         setProgress(0);
@@ -491,6 +497,7 @@ export default function Reader() {
       });
       setViewMode("score");
       setQualityWarning("");
+      setLyricNotice("");
       if (!isPdf) {
         void readImageSize(file).then((size) => {
           if (importId !== importSeqRef.current || !size) return;
@@ -567,6 +574,12 @@ export default function Reader() {
         file.name.replace(/\.(png|jpe?g|pdf)$/i, "") || "Imported score",
       );
       setXml(data.musicXml);
+      const verseCheck = checkLyricVerses(data.musicXml);
+      setLyricNotice(
+        verseCheck.suspectVerses.length > 0
+          ? `Verse ${verseCheck.suspectVerses.join(", ")} may be incomplete or on the wrong line: it has far fewer words than the other verses. Check the words against the Original tab.`
+          : "",
+      );
       setCurrentMeasure(1);
       setProgress(0);
     } catch (error) {
@@ -699,6 +712,22 @@ export default function Reader() {
                 <button
                   type="button"
                   onClick={() => setQualityWarning("")}
+                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.13em] underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            {lyricNotice && (
+              <div
+                role="status"
+                className="mb-4 flex items-start justify-between gap-3 rounded-[4px] border border-[#e2bc64] bg-[#fbf1d6] px-4 py-3 text-[13px] leading-6 text-[#5c4a1c]"
+                data-testid="notice-lyric-verses"
+              >
+                <p>{lyricNotice}</p>
+                <button
+                  type="button"
+                  onClick={() => setLyricNotice("")}
                   className="shrink-0 font-mono text-[10px] uppercase tracking-[.13em] underline"
                 >
                   Dismiss

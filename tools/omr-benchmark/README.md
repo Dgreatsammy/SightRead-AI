@@ -47,3 +47,13 @@ there (80.1). Median-filter "denoising" erased the staff lines and failed outrig
 
 Only four pieces and synthetic degradation (no real phone photos), so this is a lead,
 not a finding to ship. More pairs are needed first.
+
+## Lyrics clean-up (lyricCleanup.ts)
+Footer text (credits, web addresses, "edition produced by ...") was read as sung words in
+nearly every reading. `removeFooterLyrics` removes it from the drawn sheet, anchored on strong
+markers (URL, e-mail, copyright sign, "edition", "CPDL", "LilyPond"). Checked on 40 recognised
+files from the five pieces: footer text was removed wherever it was recognisable, nothing was
+removed from the clean As with Gladness, and the spelling score never changed, so no real
+lyric word was lost. `checkLyricVerses` flags a verse with far fewer words than the others
+(it stayed quiet on all five true scores, and fired on the phantom fourth verse and the
+mangled low-quality readings). It cannot catch every case.

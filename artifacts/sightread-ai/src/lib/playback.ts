@@ -1,3 +1,4 @@
+import { readRepeatMarks, type RepeatMarks } from "./repeats";
 import { splitStackedChordsIntoVoices } from "./voiceSplit";
 
 export type PlaybackState =
@@ -47,6 +48,8 @@ export interface PlaybackScore {
   measures: PlaybackMeasure[];
   beatsPerBar: number;
   beatUnitBeats: number;
+  /** Repeat signs and endings read from the score (bar indices, 0-based). */
+  repeats?: RepeatMarks;
 }
 
 export interface PlaybackSnapshot {
@@ -573,6 +576,7 @@ export function parseMusicXml(source: string): PlaybackScore {
     measures: firstPart.measures,
     beatsPerBar: firstPart.beatsPerBar,
     beatUnitBeats: firstPart.beatUnitBeats,
+    repeats: readRepeatMarks(parts),
   };
 }
 

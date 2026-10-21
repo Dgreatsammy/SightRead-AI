@@ -2,6 +2,7 @@ import {
   type ChangeEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -37,7 +38,15 @@ import {
   type PlaybackSnapshot,
   type PlaybackState,
 } from "@/lib/playback";
+import { cleanClefs } from "@/lib/clefCleanup";
 import { checkLyricVerses, removeFooterLyrics } from "@/lib/lyricCleanup";
+import {
+  buildPlayOrder,
+  hasRepeats,
+  toPlayedMeasure,
+  toPlayedRange,
+  unrollForRepeats,
+} from "@/lib/repeats";
 import { fillMissingRests } from "@/lib/restFill";
 import { hasMeaningfulPartNames } from "@/lib/scoreLabels";
 import {
@@ -164,6 +173,10 @@ export default function Reader() {
   // Shown after reading a scan when a verse looks incomplete or misplaced.
   const [lyricNotice, setLyricNotice] = useState("");
   const importSeqRef = useRef(0);
+  // For each bar the engine plays, the ORIGINAL bar it came from. This lets the
+  // screen keep showing the bar numbers on the printed page while the sound
+  // follows repeat signs.
+  const playOrderRef = useRef<number[]>([]);
   // Lets the person (or the time limit) stop a score that is taking too long.
   const omrAbortRef = useRef<{ controller: AbortController; reason: "user" | "timeout" | null } | null>(null);
   const [scoreStatus, setScoreStatus] = useState<"loading" | "ready" | "error">(
@@ -193,6 +206,7 @@ export default function Reader() {
   const [score, setScore] = useState<PlaybackScore | null>(null);
   const [selectedPartId, setSelectedPartId] = useState<string>("");
   const [loop, setLoop] = useState(false);
+  const [playRepeats, setPlayRepeats] = useState(true);
   const [loopStart, setLoopStart] = useState(initialSettings.rangeStart);
   const [loopEnd, setLoopEnd] = useState(initialSettings.rangeEnd);
 
@@ -208,7 +222,9 @@ export default function Reader() {
 
   const handleProgress = useCallback((snapshot: PlaybackSnapshot) => {
     setPlayback(snapshot.state);
-    setCurrentMeasure(snapshot.currentMeasure + 1);
+    setCurrentMeasure(
+      (playOrderRef.current[snapshot.currentMeasure] ?? snapshot.currentMeasure) + 1,
+    );
     setCurrentNoteMidi(snapshot.currentNoteMidi);
     // Only re-draw the page when the bar visibly moves (about half a percent);
     // every extra redraw is main-thread work a phone could do without.
@@ -254,43 +270,70 @@ export default function Reader() {
     };
   }, [handleProgress]);
 
-  useEffect(() => {
-    if (!score) return;
-
-    const selectedPart =
+  // ONE decision about which part is loaded: the dropdown shows it and the
+  // engine plays it, so they cannot disagree.
+  const activePart = useMemo(() => {
+    if (!score) return null;
+    return (
       score.parts.find((part) => part.id === selectedPartId) ??
-      score.parts.find((part) =>
-        part.notes.some((note) => note.midi !== null),
-      ) ??
-      score.parts[0];
+      score.parts.find((part) => part.notes.some((note) => note.midi !== null)) ??
+      score.parts[0] ??
+      null
+    );
+  }, [score, selectedPartId]);
 
-    if (!selectedPart) return;
+  // Order the bars are played in (follows repeat signs unless switched off).
+  const playOrder = useMemo(
+    () =>
+      score
+        ? buildPlayOrder(score.measures.length, playRepeats ? score.repeats : undefined)
+        : [],
+    [score, playRepeats],
+  );
+
+  // Latest values the engine needs when a part is (re)loaded, read from here so
+  // changing mute, loop or the range does NOT reload the part and stop playback.
+  const latestRef = useRef({ muted, loop, loopStart, loopEnd });
+  latestRef.current = { muted, loop, loopStart, loopEnd };
+
+  useEffect(() => {
+    if (!score || !activePart) return;
+
+    const unrolled = unrollForRepeats(activePart.notes, activePart.measures, playOrder);
+    playOrderRef.current = unrolled.order;
 
     const playbackScore: PlaybackScore = {
       ...score,
-      selectedPartId: selectedPart.id,
-      tempo: selectedPart.tempo,
-      notes: selectedPart.notes,
-      measures: selectedPart.measures,
-      beatsPerBar: selectedPart.beatsPerBar,
-      beatUnitBeats: selectedPart.beatUnitBeats,
+      selectedPartId: activePart.id,
+      tempo: activePart.tempo,
+      notes: unrolled.notes,
+      measures: unrolled.measures,
+      beatsPerBar: activePart.beatsPerBar,
+      beatUnitBeats: activePart.beatUnitBeats,
     };
 
     const engine = engineRef.current;
+    const latest = latestRef.current;
     engine?.setScore(playbackScore);
     engine?.setTempo(settingsRef.current.tempo);
     engine?.setPlaybackSpeed(settingsRef.current.speed);
     engine?.setMetronome(settingsRef.current.metronome);
     engine?.setVolume(settingsRef.current.volume);
-    engine?.setMuted(muted);
-    engine?.setRange(loopStart - 1, loopEnd - 1);
-    engine?.setLoop(loop);
-  }, [score, selectedPartId, muted, loopStart, loopEnd, loop]);
+    engine?.setMuted(latest.muted);
+    const [from, to] = toPlayedRange(unrolled.order, latest.loopStart - 1, latest.loopEnd - 1);
+    engine?.setRange(from, to);
+    engine?.setLoop(latest.loop);
+  }, [score, activePart, playOrder]);
 
   useEffect(() => {
     if (!score) return;
-    engineRef.current?.setRange(loopStart - 1, loopEnd - 1);
-  }, [score, loopStart, loopEnd]);
+    const [from, to] = toPlayedRange(playOrderRef.current, loopStart - 1, loopEnd - 1);
+    engineRef.current?.setRange(from, to);
+  }, [score, loopStart, loopEnd, playOrder]);
+
+  useEffect(() => {
+    engineRef.current?.setLoop(loop);
+  }, [loop]);
 
   useEffect(() => {
     engineRef.current?.setTempo(tempo);
@@ -386,7 +429,7 @@ export default function Reader() {
       try {
         // Footer text (credits, web addresses) that was read as sung words is
         // removed from the drawn sheet; then unread rests are drawn in.
-        drawn = fillMissingRests(removeFooterLyrics(source).xml);
+        drawn = fillMissingRests(cleanClefs(removeFooterLyrics(source).xml).xml);
       } catch {
         drawn = source;
       }
@@ -429,7 +472,7 @@ export default function Reader() {
   const jumpMeasure = (measure: number) => {
     const measureCount = score?.measures.length ?? 1;
     const next = Math.min(measureCount, Math.max(1, measure));
-    engineRef.current?.seekMeasure(next - 1);
+    engineRef.current?.seekMeasure(toPlayedMeasure(playOrderRef.current, next - 1));
     setCurrentMeasure(next);
     setCurrentNoteMidi(null);
     scoreRef.current?.scrollTo({ left: (next - 1) * 260, behavior: "smooth" });
@@ -610,7 +653,8 @@ export default function Reader() {
     );
     setLoopStart(safeStart);
     setLoopEnd(safeEnd);
-    engineRef.current?.setRange(safeStart - 1, safeEnd - 1);
+    const [playedFrom, playedTo] = toPlayedRange(playOrderRef.current, safeStart - 1, safeEnd - 1);
+    engineRef.current?.setRange(playedFrom, playedTo);
     setProgress(0);
     setCurrentMeasure(safeStart);
   };
@@ -911,7 +955,7 @@ export default function Reader() {
 
                 <select
                   id="part-select"
-                  value={selectedPartId || score.selectedPartId}
+                  value={activePart?.id ?? score.selectedPartId}
                   onChange={(event) => {
                     setSelectedPartId(event.target.value);
                     engineRef.current?.stop();
@@ -931,6 +975,23 @@ export default function Reader() {
                     </option>
                   ))}
                 </select>
+                <p
+                  className="mt-2 font-mono text-[10px] uppercase tracking-[.13em] text-[#6f7776]"
+                  data-testid="text-loaded-part"
+                >
+                  Loaded for playback: {activePart?.displayName ?? "none"}
+                </p>
+                {hasRepeats(score.repeats) && (
+                  <button
+                    type="button"
+                    onClick={() => setPlayRepeats((value) => !value)}
+                    aria-pressed={playRepeats}
+                    className="mt-3 rounded-full border border-[#cec3b5] px-4 py-2 font-mono text-[10px] uppercase tracking-[.13em] text-[#1d3045] hover:bg-[#f2ece2]"
+                    data-testid="button-play-repeats"
+                  >
+                    Play repeats: {playRepeats ? "On" : "Off"}
+                  </button>
+                )}
               </div>
             )}
             <div className="rounded-[4px] border border-[#cfc2b3] bg-[#f3ece1] p-4 shadow-[0_8px_18px_rgba(31,42,53,.05)]">

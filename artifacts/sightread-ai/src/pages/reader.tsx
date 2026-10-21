@@ -319,6 +319,7 @@ export default function Reader() {
 
       if (requestId !== renderRequestRef.current) return;
 
+      osmd.Zoom = window.matchMedia("(max-width: 639px)").matches ? 0.8 : 1;
       osmd.render();
       setScoreStatus("ready");
     } catch (error) {
@@ -532,16 +533,16 @@ export default function Reader() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1480px] lg:grid-cols-[minmax(0,1fr)_330px]">
-        <section className="min-w-0 px-4 pb-10 pt-7 sm:px-7 lg:px-10 lg:pt-10">
-          <div className="mx-auto max-w-[1040px]">
+      <div className="mx-auto grid w-full min-w-0 max-w-[1480px] lg:grid-cols-[minmax(0,1fr)_330px]">
+        <section className="min-w-0 px-3 pb-10 pt-6 sm:px-7 sm:pt-7 lg:px-10 lg:pt-10">
+          <div className="mx-auto min-w-0 max-w-[1040px]">
             <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="font-mono text-[10px] uppercase tracking-[.19em] text-[#db644a]">
                   Current score
                 </p>
                 <h1
-                  className="mt-2 font-serif text-[clamp(2rem,4vw,3.35rem)] leading-none tracking-[-.055em]"
+                  className="mt-2 max-w-full break-words font-serif text-[clamp(1.75rem,7.5vw,2.4rem)] leading-tight tracking-[-.055em] sm:text-[clamp(2rem,4vw,3.35rem)] sm:leading-none"
                   data-testid="text-score-title"
                 >
                   {scoreTitle}
@@ -609,7 +610,7 @@ export default function Reader() {
               )}
               <div
                 ref={scoreRef}
-                className={`score-viewer max-h-[650px] min-h-[560px] overflow-auto p-5 transition-opacity sm:p-9 ${scoreStatus === "ready" ? "opacity-100" : "opacity-0"}`}
+                className={`score-viewer max-h-[650px] min-h-[560px] w-full min-w-0 max-w-full overflow-x-hidden overflow-y-auto p-2 transition-opacity sm:p-9 [&_svg]:mx-auto [&_svg]:block [&_svg]:h-auto [&_svg]:max-w-full ${scoreStatus === "ready" ? "opacity-100" : "opacity-0"}`}
                 data-testid="score-rendered"
                 aria-label="Rendered MusicXML score"
               />

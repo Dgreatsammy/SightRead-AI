@@ -52,3 +52,7 @@ Thumbs.db
 tools/audiveris/tessdata/*.traineddata
 *.patch
 *.patch
+
+# Patch files received for applying with "git am" must never be committed
+*.patch
+*.patch~

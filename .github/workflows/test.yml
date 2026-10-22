@@ -1,0 +1,27 @@
+# Runs the checks on every push to main and on every pull request, so a broken
+# change is flagged BEFORE it is merged or goes live.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4        # uses the version in package.json ("packageManager")
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install (only the two packages that have tests)
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter "@workspace/sightread-ai..." --filter "@workspace/api-server..."
+      - name: Type check the app
+        run: pnpm --filter @workspace/sightread-ai exec tsc -p tsconfig.json --noEmit
+      - name: Test the app
+        run: pnpm --filter @workspace/sightread-ai test
+      - name: Test the server
+        run: pnpm --filter @workspace/api-server test

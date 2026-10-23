@@ -32,6 +32,11 @@ Run the same command in Replit's Shell.
 5. Back on the VM: `git checkout main && git pull`.
 Replit's own automatic checkpoints are NOT GitHub commits: nothing counts until it is pushed.
 
+## Replit: what runs by itself after a pull
+`scripts/post-merge.sh` runs automatically in Replit after every `git pull` or merge. It must stay
+light (it only installs the two packages that matter). If Replit ever says
+`fork: Resource temporarily unavailable`, restart the workspace and check that script first.
+
 ## Rules that prevent most breakage
 - Never edit the same files in two places without pulling first.
 - Never use `git push --force`, and never edit files on github.com unless you then `git pull`.

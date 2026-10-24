@@ -48,6 +48,8 @@ import {
   unrollForRepeats,
 } from "@/lib/repeats";
 import { fillMissingRests } from "@/lib/restFill";
+import { restoreRestAfterRepeat } from "@/lib/repeatStartRest";
+import { hideDuplicateVoiceRests } from "@/lib/strayRests";
 import { hasMeaningfulPartNames } from "@/lib/scoreLabels";
 import {
   isPlaybackDebugRequested,
@@ -172,6 +174,7 @@ export default function Reader() {
   const [qualityWarning, setQualityWarning] = useState("");
   // Shown after reading a scan when a verse looks incomplete or misplaced.
   const [lyricNotice, setLyricNotice] = useState("");
+  const [notesNotice, setNotesNotice] = useState("");
   const importSeqRef = useRef(0);
   // For each bar the engine plays, the ORIGINAL bar it came from. This lets the
   // screen keep showing the bar numbers on the printed page while the sound
@@ -382,7 +385,7 @@ export default function Reader() {
     );
   }, [loopStart, loopEnd]);
 
-  const renderScore = useCallback(async (source: string) => {
+  const renderScore = useCallback(async (rawSource: string) => {
     const requestId = ++renderRequestRef.current;
 
     if (!scoreRef.current) return;
@@ -391,6 +394,16 @@ export default function Reader() {
     setScoreStatus("loading");
     setErrorText("");
     scoreRef.current.innerHTML = "";
+    // Put back the opening rest the recogniser drops next to a start-repeat
+    // sign. It is done once, here, before playback AND the drawn sheet read the
+    // score, so a rest you see is the silence you hear (and neither lands at
+    // the wrong end of the bar). Returns the text unchanged if nothing applies.
+    let source = rawSource;
+    try {
+      source = restoreRestAfterRepeat(rawSource);
+    } catch {
+      source = rawSource;
+    }
     try {
       const parsed = parseMusicXml(source);
       const nextStart = Math.min(
@@ -428,8 +441,11 @@ export default function Reader() {
       let drawn = source;
       try {
         // Footer text (credits, web addresses) that was read as sung words is
-        // removed from the drawn sheet; then unread rests are drawn in.
-        drawn = fillMissingRests(cleanClefs(removeFooterLyrics(source).xml).xml);
+        // removed from the drawn sheet; duplicate rests left behind when notes
+        // were moved to another voice are hidden; then unread rests are drawn in.
+        drawn = fillMissingRests(
+          hideDuplicateVoiceRests(cleanClefs(removeFooterLyrics(source).xml).xml),
+        );
       } catch {
         drawn = source;
       }
@@ -511,6 +527,7 @@ export default function Reader() {
         setViewMode("score");
         setQualityWarning("");
         setLyricNotice("");
+        setNotesNotice("");
         setXml(content);
         setCurrentMeasure(1);
         setProgress(0);
@@ -541,6 +558,7 @@ export default function Reader() {
       setViewMode("score");
       setQualityWarning("");
       setLyricNotice("");
+      setNotesNotice("");
       if (!isPdf) {
         void readImageSize(file).then((size) => {
           if (importId !== importSeqRef.current || !size) return;
@@ -622,6 +640,11 @@ export default function Reader() {
         verseCheck.suspectVerses.length > 0
           ? `Verse ${verseCheck.suspectVerses.join(", ")} may be incomplete or on the wrong line: it has far fewer words than the other verses. Check the words against the Original tab.`
           : "",
+      );
+      // Reading notes from an image is never 100% exact. Say so plainly on
+      // every image import instead of implying the sheet is certain.
+      setNotesNotice(
+        "This score was read from an image by software, so some notes or rhythms may be wrong, especially in busy passages with several voices. Compare it with the Original tab before you practise.",
       );
       setCurrentMeasure(1);
       setProgress(0);
@@ -756,6 +779,22 @@ export default function Reader() {
                 <button
                   type="button"
                   onClick={() => setQualityWarning("")}
+                  className="shrink-0 font-mono text-[10px] uppercase tracking-[.13em] underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            {notesNotice && (
+              <div
+                role="status"
+                className="mb-4 flex items-start justify-between gap-3 rounded-[4px] border border-[#e2bc64] bg-[#fbf1d6] px-4 py-3 text-[13px] leading-6 text-[#5c4a1c]"
+                data-testid="notice-note-accuracy"
+              >
+                <p>{notesNotice}</p>
+                <button
+                  type="button"
+                  onClick={() => setNotesNotice("")}
                   className="shrink-0 font-mono text-[10px] uppercase tracking-[.13em] underline"
                 >
                   Dismiss

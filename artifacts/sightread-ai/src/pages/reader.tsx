@@ -50,6 +50,7 @@ import {
 import { fillMissingRests } from "@/lib/restFill";
 import { restoreRestAfterRepeat } from "@/lib/repeatStartRest";
 import { hideDuplicateVoiceRests } from "@/lib/strayRests";
+import { describeUnplacedNotes, readUnplacedNotes } from "@/lib/unplacedNotice";
 import { hasMeaningfulPartNames } from "@/lib/scoreLabels";
 import {
   isPlaybackDebugRequested,
@@ -616,6 +617,7 @@ export default function Reader() {
       const data = (await response.json()) as {
         success?: boolean;
         musicXml?: string;
+        unplacedNotes?: unknown;
         error?: string;
       };
 
@@ -643,8 +645,12 @@ export default function Reader() {
       );
       // Reading notes from an image is never 100% exact. Say so plainly on
       // every image import instead of implying the sheet is certain.
+      const generalNotice =
+        "This score was read from an image by software, so some notes or rhythms may be wrong, especially in busy passages with several voices. Compare it with the Original tab before you practise.";
+      // If the reader found notes it could not place, name the bars.
+      const incompleteBars = describeUnplacedNotes(readUnplacedNotes(data.unplacedNotes));
       setNotesNotice(
-        "This score was read from an image by software, so some notes or rhythms may be wrong, especially in busy passages with several voices. Compare it with the Original tab before you practise.",
+        incompleteBars ? `${incompleteBars} ${generalNotice}` : generalNotice,
       );
       setCurrentMeasure(1);
       setProgress(0);

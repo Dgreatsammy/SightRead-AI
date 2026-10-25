@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { extractMusicXmlFromMxl } from "../lib/mxl.js";
 import { sanitizeAudiverisMusicXml } from "../lib/sanitizeAudiverisMusicXml.js";
+import { readUnplacedNotes } from "../lib/omrUnplacedNotes.js";
 import {
   DEFAULT_OMR_MAX_PAGES,
   DEFAULT_OMR_TIMEOUT_MS,
@@ -138,6 +139,9 @@ router.post(
             pageRange(OMR_MAX_PAGES),
             "-transcribe",
             "-export",
+            // Keep Audiveris' project file so we can see which recognised
+            // notes it could not place in a bar (see omrUnplacedNotes.ts).
+            "-save",
             "-output",
             outputDir,
             inputPath,
@@ -208,10 +212,18 @@ router.post(
       const includeRaw =
         process.env["OMR_DEBUG_RAW"] === "1" && req.query["debug"] === "raw";
 
+      // Notes Audiveris found but dropped from the bar. Best effort only: an
+      // empty list on any problem, never an error.
+      const omrFile = files.find((file) => /\.omr$/i.test(file));
+      const unplacedNotes = omrFile
+        ? await readUnplacedNotes(path.join(outputDir, omrFile))
+        : [];
+
       res.json({
         success: true,
         musicXml: xml,
         source: "audiveris",
+        unplacedNotes,
         ...(includeRaw ? { rawMusicXml: rawXml } : {}),
       });
     } catch (error) {

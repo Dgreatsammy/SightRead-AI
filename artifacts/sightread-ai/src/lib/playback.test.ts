@@ -5,6 +5,7 @@ import {
   midiToFrequency,
   MusicalPlaybackEngine,
   parseMusicXml,
+  selectPlaybackPart,
   type PlaybackSnapshot,
   type PlaybackEngineOptions,
   PLAYBACK_ENGINE_VERSION,
@@ -537,6 +538,53 @@ describe("playback engine", () => {
       currentMeasure: 0,
       progress: 0,
     });
+  });
+
+  it("switches to the selected part from the beginning and cancels old audio", async () => {
+    const secondPart = `<part id="P2">${measure(1, note({ step: "D" }), oneFour)}${measure(2, note({ step: "E" }), oneFour)}</part>`;
+    const score = parseMusicXml(
+      scoreXml(
+        `${measure(1, note({ step: "C" }), oneFour)}${measure(2, note({ step: "G" }), oneFour)}`,
+        secondPart,
+      ),
+    );
+    const { engine } = createEngine(selectPlaybackPart(score, "P1"));
+    engine.setTempo(60);
+    engine.play();
+    await advance(100);
+
+    const context = FakeAudioContext.latest!;
+    const oldPartOscillators = context.oscillators.filter(
+      (oscillator) =>
+        Math.abs(oscillator.frequency.value - midiToFrequency(60)) < 0.01,
+    );
+    expect(oldPartOscillators.length).toBeGreaterThan(0);
+    const switchedAt = currentClock / 1000;
+
+    engine.reset();
+    engine.setScore(selectPlaybackPart(score, "P2"));
+    engine.play();
+    await advance(40);
+
+    expect(oldPartOscillators[0].stopTime).toBeCloseTo(
+      switchedAt + 0.025,
+      8,
+    );
+    const newPartOscillators = context.oscillators.filter(
+      (oscillator) => oscillator.startTime >= switchedAt,
+    );
+    expect(
+      newPartOscillators.some(
+        (oscillator) =>
+          Math.abs(oscillator.frequency.value - midiToFrequency(62)) < 0.01,
+      ),
+    ).toBe(true);
+    expect(
+      newPartOscillators.some(
+        (oscillator) =>
+          Math.abs(oscillator.frequency.value - midiToFrequency(60)) < 0.01,
+      ),
+    ).toBe(false);
   });
 
   it("routes volume and mute changes through the master gain", () => {

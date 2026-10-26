@@ -486,6 +486,14 @@ export default function Reader() {
 
   const stopPlayback = () => engineRef.current?.stop();
 
+  const resetPlayback = () => {
+    engineRef.current?.reset();
+    setPlayback("stopped");
+    setCurrentMeasure(1);
+    setCurrentNoteMidi(null);
+    setProgress(0);
+  };
+
   const jumpMeasure = (measure: number) => {
     const measureCount = score?.measures.length ?? 1;
     const next = Math.min(measureCount, Math.max(1, measure));
@@ -1003,10 +1011,9 @@ export default function Reader() {
                   value={activePart?.id ?? score.selectedPartId}
                   onChange={(event) => {
                     setSelectedPartId(event.target.value);
-                    engineRef.current?.stop();
-                    setPlayback("stopped");
-                    setProgress(0);
-                    setCurrentNoteMidi(null);
+                    setLoopStart(1);
+                    setLoopEnd(measureCount);
+                    resetPlayback();
                   }}
                   className="mt-3 w-full rounded-[4px] border border-[#c5b8aa] bg-[#fcf8ef] px-3 py-3 text-[13px] text-[#21354a] outline-none focus:border-[#db644a]"
                   data-testid="select-playback-part"
@@ -1080,7 +1087,7 @@ export default function Reader() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => engineRef.current?.reset()}
+                  onClick={resetPlayback}
                   className="ml-auto grid h-10 w-10 place-items-center rounded-full border border-[#c5b8aa] text-[#526171] transition-colors hover:border-[#db644a] hover:text-[#db644a]"
                   aria-label="Reset to beginning"
                   data-testid="button-reset"
@@ -1142,6 +1149,34 @@ export default function Reader() {
                   </span>
                   <span>{Math.round(progress * 100)}%</span>
                 </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-[4px] border border-[#cfc2b3] bg-[#f3ece1] p-4">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-[.15em] text-[#707a79]">
+                  Jump to measure
+                </span>
+                <span className="font-mono text-[11px] text-[#db644a]">
+                  {String(currentMeasure).padStart(2, "0")}
+                </span>
+              </div>
+              <div className="mt-4 grid grid-cols-4 gap-1.5">
+                {Array.from(
+                  { length: measureCount },
+                  (_, index) => index + 1,
+                ).map((measure) => (
+                  <button
+                    key={measure}
+                    type="button"
+                    onClick={() => jumpMeasure(measure)}
+                    className={`h-9 rounded-[3px] border font-mono text-[11px] transition-colors ${currentMeasure === measure ? "border-[#db644a] bg-[#db644a] text-[#fff8eb]" : "border-[#d0c3b5] bg-[#ede4d8] text-[#667070] hover:border-[#db644a] hover:text-[#db644a]"}`}
+                    aria-label={`Go to measure ${measure}`}
+                    data-testid={`button-measure-${measure}`}
+                  >
+                    {measure}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -1266,34 +1301,6 @@ export default function Reader() {
               <p className="mt-3 text-[11px] leading-5 text-[#7b7d76]">
                 Notes and metronome share one safe master level.
               </p>
-            </div>
-
-            <div className="mt-4 rounded-[4px] border border-[#cfc2b3] bg-[#f3ece1] p-4">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase tracking-[.15em] text-[#707a79]">
-                  Jump to measure
-                </span>
-                <span className="font-mono text-[11px] text-[#db644a]">
-                  {String(currentMeasure).padStart(2, "0")}
-                </span>
-              </div>
-              <div className="mt-4 grid grid-cols-4 gap-1.5">
-                {Array.from(
-                  { length: measureCount },
-                  (_, index) => index + 1,
-                ).map((measure) => (
-                  <button
-                    key={measure}
-                    type="button"
-                    onClick={() => jumpMeasure(measure)}
-                    className={`h-9 rounded-[3px] border font-mono text-[11px] transition-colors ${currentMeasure === measure ? "border-[#db644a] bg-[#db644a] text-[#fff8eb]" : "border-[#d0c3b5] bg-[#ede4d8] text-[#667070] hover:border-[#db644a] hover:text-[#db644a]"}`}
-                    aria-label={`Go to measure ${measure}`}
-                    data-testid={`button-measure-${measure}`}
-                  >
-                    {measure}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <div

@@ -52,6 +52,7 @@ import { restoreRestAfterRepeat } from "@/lib/repeatStartRest";
 import { hideDuplicateVoiceRests } from "@/lib/strayRests";
 import { describeUnplacedNotes, readUnplacedNotes } from "@/lib/unplacedNotice";
 import { hasMeaningfulPartNames } from "@/lib/scoreLabels";
+import { buildReportUrl } from "@/lib/reportUrl";
 import {
   isPlaybackDebugRequested,
   PlaybackDiagnosticsPanel,
@@ -707,6 +708,17 @@ export default function Reader() {
             ? "Practice complete"
             : "Ready";
 
+  const reportUrl =
+    scoreStatus === "ready" && activePart
+      ? buildReportUrl(import.meta.env.VITE_REPORT_FORM_URL, {
+          scoreTitle,
+          measure: currentMeasure,
+          partName: activePart.displayName,
+        })
+      : null;
+  const feedbackFormUrl =
+    import.meta.env.VITE_FEEDBACK_FORM_URL?.trim() || null;
+
   return (
     <main className="paper-grain min-h-[100dvh] bg-[#e9e3d8] text-[#21354a]">
       {isPlaybackDebugRequested() && (
@@ -768,18 +780,46 @@ export default function Reader() {
                   the line
                 </p>
               </div>
-              <div
-                className="flex items-center gap-2 rounded-full border border-[#cec3b5] bg-[#f2ece2] px-3 py-2 font-mono text-[10px] uppercase tracking-[.13em] text-[#6f7776]"
-                data-testid="status-score"
-              >
-                <span
-                  className={`h-2 w-2 rounded-full ${scoreStatus === "ready" ? "bg-[#4c8d73]" : scoreStatus === "error" ? "bg-[#db644a]" : "bg-[#d9a744]"}`}
-                />
-                {scoreStatus === "ready"
-                  ? "Score ready"
-                  : scoreStatus === "error"
-                    ? "Needs attention"
-                    : "Setting the page"}
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <div
+                  className="flex items-center gap-2 rounded-full border border-[#cec3b5] bg-[#f2ece2] px-3 py-2 font-mono text-[10px] uppercase tracking-[.13em] text-[#6f7776]"
+                  data-testid="status-score"
+                >
+                  <span
+                    className={`h-2 w-2 rounded-full ${scoreStatus === "ready" ? "bg-[#4c8d73]" : scoreStatus === "error" ? "bg-[#db644a]" : "bg-[#d9a744]"}`}
+                  />
+                  {scoreStatus === "ready"
+                    ? "Score ready"
+                    : scoreStatus === "error"
+                      ? "Needs attention"
+                      : "Setting the page"}
+                </div>
+                {(reportUrl || feedbackFormUrl) && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[10px] uppercase tracking-[.13em]">
+                    {reportUrl && (
+                      <a
+                        href={reportUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[#6f7776] underline decoration-[#b7aa9b] underline-offset-4 transition-colors hover:text-[#db644a]"
+                        data-testid="link-report-wrong-note"
+                      >
+                        Report a wrong note
+                      </a>
+                    )}
+                    {feedbackFormUrl && (
+                      <a
+                        href={feedbackFormUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[#6f7776] underline decoration-[#b7aa9b] underline-offset-4 transition-colors hover:text-[#db644a]"
+                        data-testid="link-give-feedback"
+                      >
+                        Give feedback
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

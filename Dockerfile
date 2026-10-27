@@ -39,6 +39,14 @@ WORKDIR /app
 FROM base AS build
 COPY . .
 RUN pnpm install --frozen-lockfile
+
+# Public form links for the Reader page. Railway passes these in as build
+# arguments; Vite bakes them into the frontend. If unset, the buttons stay hidden.
+ARG VITE_REPORT_FORM_URL
+ARG VITE_FEEDBACK_FORM_URL
+ENV VITE_REPORT_FORM_URL=$VITE_REPORT_FORM_URL
+ENV VITE_FEEDBACK_FORM_URL=$VITE_FEEDBACK_FORM_URL
+
 # The frontend build script reads PORT/BASE_PATH at build time even though
 # they don't affect a static build's runtime behavior; values here just need
 # to be valid, the real PORT is supplied by Railway/Render at container start.
